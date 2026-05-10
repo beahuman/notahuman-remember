@@ -1,0 +1,23 @@
+# nah-remember-unified — unified MCP server for nah-remember Phase 3
+# Migrated from requirements.txt 2026-05-10 (NAH-374b)
+# Workspace member of infrastructure/
+
+[project]
+name = "nah-remember-unified"
+version = "0.1.0"
+description = "Unified MCP server for nah-remember (PostgreSQL + pgvector long-term memory, Phase 3)"
+requires-python = ">=3.10"
+dependencies = [
+    "asyncpg>=0.29.0",
+    "httpx>=0.25.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.uv]
+package = false

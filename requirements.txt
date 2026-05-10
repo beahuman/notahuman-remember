@@ -1,0 +1,15 @@
+# NAH Memory Unified MCP Server Dependencies
+# Created: 2025-12-01
+
+# Async PostgreSQL driver with pgvector support
+asyncpg>=0.29.0
+
+# HTTP client for LiteLLM embedding requests
+httpx>=0.25.0
+
+# NumPy for vector operations
+numpy>=1.24.0
+
+# Optional: for development/testing
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
