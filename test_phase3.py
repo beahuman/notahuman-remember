@@ -112,7 +112,7 @@ class TestPhase3:
             parsed = json.loads(json_str)
             assert parsed["layer"] == "semantic"
 
-            print(f"  ✅ JSON serialization successful")
+            print("  ✅ JSON serialization successful")
             print(f"     Keys: {list(result_dict.keys())}")
             self.results.append(("JSON Serialization", True, "All keys present"))
         except Exception as e:
@@ -205,7 +205,7 @@ class TestPhase3:
             assert "results" in result
             assert "layers_queried" in result
 
-            print(f"  ✅ Ranked search succeeded")
+            print("  ✅ Ranked search succeeded")
             print(f"     Total results: {result['total_results']}")
             print(f"     Layers queried: {result['layers_queried']}")
             print(f"     Weights: {result['weights']}")
@@ -240,7 +240,7 @@ class TestPhase3:
             for layer in result["layers_queried"]:
                 assert layer == "semantic", f"Unexpected layer: {layer}"
 
-            print(f"  ✅ Single-layer search succeeded")
+            print("  ✅ Single-layer search succeeded")
             print(f"     Results: {result['total_results']}")
             print(f"     Layers: {result['layers_queried']}")
 
@@ -273,13 +273,13 @@ class TestPhase3:
                 ids2 = [r["memory_id"] for r in result2["results"][:5]]
 
                 if ids1 == ids2:
-                    print(f"  ✅ Ranking is consistent")
+                    print("  ✅ Ranking is consistent")
                     self.results.append(("Ranking Consistency", True, "Deterministic"))
                 else:
-                    print(f"  ⚠️  Top 5 results differ (expected if data changed)")
+                    print("  ⚠️  Top 5 results differ (expected if data changed)")
                     self.results.append(("Ranking Consistency", True, "Data-dependent"))
             else:
-                print(f"  ✅ Consistent (no results)")
+                print("  ✅ Consistent (no results)")
                 self.results.append(("Ranking Consistency", True, "No results"))
         except Exception as e:
             print(f"  ❌ Test failed: {e}")
@@ -308,8 +308,8 @@ class TestPhase3:
             total = weights["significance"] + weights["access_count"] + weights["recency"]
             assert 0.99 < total < 1.01, f"Weights don't sum to 1.0: {total}"
 
-            print(f"  ✅ Weights normalized correctly")
-            print(f"     Original: 0.5, 0.5, 0.5 (sum=1.5)")
+            print("  ✅ Weights normalized correctly")
+            print("     Original: 0.5, 0.5, 0.5 (sum=1.5)")
             print(
                 f"     Normalized: {weights['significance']:.3f}, {weights['access_count']:.3f}, {weights['recency']:.3f} (sum={total:.3f})"
             )
@@ -329,7 +329,7 @@ class TestPhase3:
             assert "nah_remember_search_ranked" in mcp_tools
             assert callable(mcp_tools["nah_remember_search_ranked"])
 
-            print(f"  ✅ MCP integration successful")
+            print("  ✅ MCP integration successful")
             print(f"     Tools registered: {list(mcp_tools.keys())}")
 
             self.results.append(("MCP Integration", True, "Tool registered"))

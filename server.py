@@ -22,7 +22,7 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 import logging
 from datetime import datetime
 import uuid
@@ -1223,7 +1223,7 @@ class NahMemoryMCPServer:
         """
         import os
         import pandas as pd
-        from datetime import datetime, timezone
+        from datetime import timezone
 
         try:
             # 1. Generate embedding for query

@@ -13,13 +13,10 @@ Architecture:
 Ranking formula: significance_score × 0.4 + access_count × 0.3 + recency × 0.3
 """
 
-import asyncio
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Literal
 from enum import Enum
-import uuid
 
 import asyncpg
 
