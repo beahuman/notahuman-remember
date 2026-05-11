@@ -1358,7 +1358,7 @@ class NahMemoryMCPServer:
                         ).isoformat()
 
                     # Build set of all GraphRAG entity titles (uppercased for matching)
-                    all_graphrag_titles = set(entities_df["title"].str.upper().tolist())
+                    set(entities_df["title"].str.upper().tolist())
 
                     # Text search: find entities matching the query keywords
                     query_words = query.lower().split()
@@ -1396,9 +1396,7 @@ class NahMemoryMCPServer:
 
             # 4. Coverage analysis
             # Which nah-remember entities appear in GraphRAG?
-            remember_entity_names = {
-                r["content"].upper()[:50] for r in remember_results if r["source"] == "entity"
-            }
+            {r["content"].upper()[:50] for r in remember_results if r["source"] == "entity"}
             top_entity_names = {str(r["name"]).upper() for r in entity_names}
 
             in_both = top_entity_names & graphrag_entity_names if graphrag_entity_names else set()
