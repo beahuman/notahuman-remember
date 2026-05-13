@@ -1578,6 +1578,8 @@ class MCPHandler:
             "nah_stats": self.server.get_stats,
             # Coherence check (Phase 3)
             "nah_coherence_check": self.server.coherence_check,
+            # Cookbook-canonical save_memory (NAH-388 / #191)
+            "save_memory": self._handle_save_memory,
         }
 
         # Register Phase 3 tools if available
@@ -1949,6 +1951,32 @@ class MCPHandler:
                 "inputSchema": {"type": "object", "properties": {}},
             },
             {
+                "name": "save_memory",
+                "description": (
+                    "Save an important finding or learned pattern to persistent memory for future sessions. "
+                    "Use this whenever you discover a pattern, fix, error, or best practice worth preserving."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "description": "Short identifier for this memory (e.g. 'uv-sync-canonical-command')",
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The learning or finding to preserve in full",
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": ["pattern", "finding", "error", "best_practice"],
+                            "description": "Category: pattern=reusable approach, finding=discovered fact, error=failure mode, best_practice=recommended technique",
+                        },
+                    },
+                    "required": ["key", "value", "category"],
+                },
+            },
+            {
                 "name": "nah_coherence_check",
                 "description": (
                     "Phase 3 coherence check: cross-query nah-remember and nah-rag (GraphRAG) for the same concept. "
@@ -1973,6 +2001,20 @@ class MCPHandler:
                 },
             },
         ]
+
+    async def _handle_save_memory(self, key: str, value: str, category: str, **_kwargs) -> Dict:
+        """Cookbook-canonical save_memory handler (NAH-388 / #191).
+
+        Thin wrapper over memory_add that accepts the cookbook key/value/category
+        schema instead of raw ``content``.
+        """
+        content = f"[{category.upper()}] {key}: {value}"
+        return await self.server.memory_add(
+            content=content,
+            memory_type=category,
+            tags=[key, category],
+            importance_score=0.7,
+        )
 
     async def handle_request(self, request: Dict) -> Optional[Dict]:
         """Handle incoming JSON-RPC request or notification"""
