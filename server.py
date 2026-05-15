@@ -45,7 +45,9 @@ LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://localhost:4000")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "embedding-primary")
 EMBEDDING_MODEL_FALLBACK = os.getenv("EMBEDDING_MODEL_FALLBACK", "embedding-large")
 LITELLM_API_KEY = os.getenv("LITELLM_MASTER_KEY", "")
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))
+EMBEDDING_DIM = int(
+    os.getenv("EMBEDDING_DIM", "1024")
+)  # DB column is vector(1024); Mistral natively returns 1024-dim
 
 
 class NahMemoryMCPServer:
