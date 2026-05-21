@@ -4,7 +4,7 @@ NAH Memory Unified MCP Server
 Consolidates mem0, rag-memory, and episodic-memory into a single PostgreSQL-backed system.
 
 Storage: PostgreSQL nah_remember schema with pgvector embeddings
-Embedding: LiteLLM proxy with OpenAI text-embedding-3-small/large aliases
+Embedding: Bifrost gateway with OpenAI text-embedding-3-small/large aliases
 
 Tables:
 - sessions: Session tracking across applications
@@ -40,11 +40,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Embedding configuration
-# LiteLLM is the only embedding path so the server stays decoupled from local model runners.
-LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://localhost:4000")
+# Bifrost is the embedding path so the server stays decoupled from local model runners.
+NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:4000")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "embedding-primary")
 EMBEDDING_MODEL_FALLBACK = os.getenv("EMBEDDING_MODEL_FALLBACK", "embedding-large")
-LITELLM_API_KEY = os.getenv("LITELLM_MASTER_KEY", "")
+NAH_MODEL_GATEWAY_KEY = os.getenv("NAH_MODEL_GATEWAY_KEY", "")
 EMBEDDING_DIM = int(
     os.getenv("EMBEDDING_DIM", "1024")
 )  # DB column is vector(1024); Mistral natively returns 1024-dim
@@ -77,7 +77,7 @@ class NahMemoryMCPServer:
             self.pool = await asyncpg.create_pool(self.db_url, min_size=2, max_size=20)
             self.http_client = httpx.AsyncClient(timeout=30.0)
             logger.info(f"PostgreSQL pool created: {self.db_url}")
-            logger.info(f"LiteLLM endpoint: {LITELLM_BASE_URL}")
+            logger.info(f"Bifrost endpoint: {NAH_MODEL_GATEWAY_URL}")
             logger.info(
                 f"Embedding model: {EMBEDDING_MODEL} (fallback: {EMBEDDING_MODEL_FALLBACK})"
             )
@@ -118,13 +118,13 @@ class NahMemoryMCPServer:
     async def generate_embedding(
         self, text: str, use_fallback: bool = False
     ) -> Optional[List[float]]:
-        """Generate an embedding through LiteLLM."""
+        """Generate an embedding through Bifrost."""
 
-        async def _generate_via_litellm(model: str) -> Optional[List[float]]:
+        async def _generate_via_bifrost(model: str) -> Optional[List[float]]:
             response = await self.http_client.post(
-                f"{LITELLM_BASE_URL}/v1/embeddings",
+                f"{NAH_MODEL_GATEWAY_URL}/v1/embeddings",
                 headers={
-                    "Authorization": f"Bearer {LITELLM_API_KEY}",
+                    "Authorization": f"Bearer {NAH_MODEL_GATEWAY_KEY}",
                     "Content-Type": "application/json",
                 },
                 json={"model": model, "input": text},
@@ -134,29 +134,29 @@ class NahMemoryMCPServer:
             if "data" in data and len(data["data"]) > 0:
                 embedding = data["data"][0].get("embedding", [])
                 logger.debug(
-                    f"Generated LiteLLM embedding with {len(embedding)} dimensions using {model}"
+                    f"Generated Bifrost embedding with {len(embedding)} dimensions using {model}"
                 )
                 return embedding
-            logger.warning(f"Unexpected LiteLLM embedding response format: {data}")
+            logger.warning(f"Unexpected Bifrost embedding response format: {data}")
             return None
 
-        litellm_model = EMBEDDING_MODEL_FALLBACK if use_fallback else EMBEDDING_MODEL
+        bifrost_model = EMBEDDING_MODEL_FALLBACK if use_fallback else EMBEDDING_MODEL
 
         try:
-            embedding = await _generate_via_litellm(litellm_model)
+            embedding = await _generate_via_bifrost(bifrost_model)
             if embedding:
                 return embedding
         except httpx.HTTPStatusError as e:
             if not use_fallback and e.response.status_code >= 500:
-                logger.warning(f"Primary LiteLLM embedding failed, trying fallback: {e}")
+                logger.warning(f"Primary Bifrost embedding failed, trying fallback: {e}")
                 return await self.generate_embedding(text, use_fallback=True)
-            logger.error(f"LiteLLM embedding generation failed: {e}")
+            logger.error(f"Bifrost embedding generation failed: {e}")
             return None
         except Exception as e:
             if not use_fallback:
-                logger.warning(f"Primary LiteLLM embedding failed, trying fallback: {e}")
+                logger.warning(f"Primary Bifrost embedding failed, trying fallback: {e}")
                 return await self.generate_embedding(text, use_fallback=True)
-            logger.error(f"LiteLLM embedding generation failed: {e}")
+            logger.error(f"Bifrost embedding generation failed: {e}")
             return None
 
         return None
