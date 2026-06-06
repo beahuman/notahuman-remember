@@ -1,11 +1,12 @@
-# nah-remember-unified — unified MCP server for nah-remember Phase 3
+# nah-remember — unified MCP server for long-term memory (PostgreSQL + pgvector)
+# Renamed 2026-05-10 from nah-remember-unified per CEO directive (NAH-CONSOLIDATION-2026-05-10)
 # Migrated from requirements.txt 2026-05-10 (NAH-374b)
 # Workspace member of infrastructure/
 
 [project]
-name = "nah-remember-unified"
+name = "nah-remember"
 version = "0.1.0"
-description = "Unified MCP server for nah-remember (PostgreSQL + pgvector long-term memory, Phase 3)"
+description = "Unified MCP server for nah-remember (PostgreSQL + pgvector long-term memory)"
 requires-python = ">=3.10"
 dependencies = [
     "asyncpg>=0.29.0",
