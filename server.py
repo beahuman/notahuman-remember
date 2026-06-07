@@ -1703,6 +1703,20 @@ class MCPHandler:
             "nah_memory_decay": self.server.decay_memories,
             # Cookbook-canonical save_memory (NAH-388 / #191)
             "save_memory": self._handle_save_memory,
+            # ── Gateway alias names (mcp-gateway TOOL_CATALOG exposes these shorter
+            #    names; without server-side aliases they 404 → message saves were
+            #    silently dropped (17 sessions / 8 messages). Servo item 2, 2026-06-06).
+            #    Same handlers, alternate keys.
+            "episodic_session_start": self.server.session_start,
+            "episodic_session_end": self.server.session_end,
+            "episodic_message_save": self.server.message_save,
+            "episodic_search": self.server.message_search,
+            "remember_add": self.server.memory_add,
+            "remember_search": self.server.memory_search,
+            "remember_get_all": self.server.memory_get_all,
+            "entity_add": self.server.entity_add,
+            "entity_search": self.server.entity_search,
+            "entity_relate": self.server.relationship_add,
         }
 
         # Register Phase 3 tools if available
