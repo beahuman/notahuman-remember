@@ -37,9 +37,9 @@ async def test_all():
         import httpx
 
         response = httpx.post(
-            os.getenv("LITELLM_BASE_URL", "http://localhost:4000") + "/v1/embeddings",
+            os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:4000") + "/v1/embeddings",
             headers={
-                "Authorization": f"Bearer {os.getenv('LITELLM_MASTER_KEY', '')}",
+                "Authorization": f"Bearer {os.getenv('NAH_MODEL_GATEWAY_KEY', '')}",
                 "Content-Type": "application/json",
             },
             json={"model": "text-embedding-3-small", "input": "integration test"},

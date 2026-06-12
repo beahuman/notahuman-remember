@@ -26,13 +26,13 @@ try:
 except Exception as e:
     print(f"Connection Error: {e}")
 
-# Test LiteLLM proxy
-print("\n=== Testing LiteLLM Proxy ===")
+# Test Bifrost gateway
+print("\n=== Testing Bifrost Gateway ===")
 try:
     resp = httpx.post(
         "http://localhost:4000/embeddings",
         headers={
-            "Authorization": f"Bearer {os.getenv('LITELLM_MASTER_KEY', '')}",
+            "Authorization": f"Bearer {os.getenv('NAH_MODEL_GATEWAY_KEY', '')}",
             "Content-Type": "application/json",
         },
         json={"model": "embedding-primary", "input": "test"},

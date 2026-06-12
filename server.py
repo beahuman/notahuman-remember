@@ -1532,7 +1532,7 @@ class NahMemoryMCPServer:
             return {
                 "success": True,
                 "stats": stats,
-                "litellm_endpoint": LITELLM_BASE_URL,
+                "bifrost_endpoint": NAH_MODEL_GATEWAY_URL,
                 "embedding_model": EMBEDDING_MODEL,
                 "embedding_dim": EMBEDDING_DIM,
             }
