@@ -10,7 +10,7 @@ Architecture:
 - Semantic layer: Semantic memories + procedures (long-term knowledge)
 - Meta layer: Entity graph + memory history (metadata + evolution tracking)
 
-Ranking formula: significance_score × 0.4 + access_count × 0.3 + recency × 0.3
+Ranking formula: significance_score × 0.3 + access_count × 0.2 + recency × 0.2 + reinforcement_score × 0.3
 """
 
 import logging
@@ -44,6 +44,7 @@ class RankedResult:
         layer: MemoryLayer,
         significance_score: float = 0.5,
         access_count: int = 0,
+        reinforcement_score: float = 0.0,
         created_at: datetime = None,
         recency_window_days: int = 30,
         metadata: Optional[Dict] = None,
@@ -54,6 +55,7 @@ class RankedResult:
         self.content = content
         self.layer = layer
         self.significance_score = significance_score
+        self.reinforcement_score = reinforcement_score
         self.access_count = access_count
         self.created_at = created_at or datetime.utcnow()
         self.metadata = metadata or {}
@@ -70,17 +72,19 @@ class RankedResult:
 
         # Normalize access count logarithmically (avoid overwhelming impact)
         self.access_count_score = min(1.0, (1.0 + access_count) / 10.0)
+        self.reinforcement_score = min(1.0, max(0.0, float(reinforcement_score)))
 
     def compute_composite_score(
         self,
-        significance_weight: float = 0.4,
-        access_weight: float = 0.3,
-        recency_weight: float = 0.3,
+        significance_weight: float = 0.3,
+        access_weight: float = 0.2,
+        recency_weight: float = 0.2,
+        reinforcement_weight: float = 0.3,
     ) -> float:
         """
         Compute composite ranking score.
 
-        Formula: significance_score × 0.4 + access_count × 0.3 + recency × 0.3
+        Formula: significance_score × 0.3 + access_count × 0.2 + recency × 0.2 + reinforcement_score × 0.3
         """
         # Convert Decimal types to float (PostgreSQL returns Decimal for numeric fields)
         sig_score = (
@@ -98,8 +102,16 @@ class RankedResult:
             if hasattr(self.recency_score, "__float__")
             else self.recency_score
         )
+        reinf_score = (
+            float(self.reinforcement_score)
+            if hasattr(self.reinforcement_score, "__float__")
+            else self.reinforcement_score
+        )
 
-        if abs(significance_weight + access_weight + recency_weight - 1.0) > 0.01:
+        if (
+            abs(significance_weight + access_weight + recency_weight + reinforcement_weight - 1.0)
+            > 0.01
+        ):
             logger.warning(
                 f"Weights do not sum to 1.0: {significance_weight + access_weight + recency_weight}"
             )
@@ -108,6 +120,7 @@ class RankedResult:
             sig_score * significance_weight
             + access_score * access_weight
             + recency_score * recency_weight
+            + reinf_score * reinforcement_weight
         )
 
     def to_dict(self) -> Dict:

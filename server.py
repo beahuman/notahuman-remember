@@ -81,6 +81,25 @@ class NahMemoryMCPServer:
             logger.info(
                 f"Embedding model: {EMBEDDING_MODEL} (fallback: {EMBEDDING_MODEL_FALLBACK})"
             )
+            # Ensure negative_constraints table exists (Phase C)
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS nah_remember.negative_constraints (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        pattern TEXT NOT NULL,
+                        trigger_context TEXT NOT NULL,
+                        severity TEXT DEFAULT 'warning',
+                        weight FLOAT DEFAULT 0.8,
+                        source_session_id UUID REFERENCES nah_remember.sessions(id),
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        hit_count INTEGER DEFAULT 0,
+                        last_hit_at TIMESTAMPTZ
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_negative_constraints_context
+                        ON nah_remember.negative_constraints
+                        USING gin(to_tsvector('english', trigger_context));
+                """)
+                logger.info("negative_constraints table ensured")
         except Exception as e:
             logger.error(f"Setup error: {e}")
             raise
@@ -776,8 +795,8 @@ class NahMemoryMCPServer:
             query = """
                 INSERT INTO nah_remember.semantic_memories
                 (user_id, agent_id, content, memory_type, category,
-                 tags, metadata, importance_score, embedding)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::vector)
+                 tags, metadata, importance_score, embedding, retrieval_count, reinforcement_score)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::vector, 0, 0.0)
                 RETURNING id, user_id, created_at
             """
 
@@ -837,7 +856,7 @@ class NahMemoryMCPServer:
                 sql = """
                     SELECT id, content, memory_type, category, tags, metadata,
                            1 - (embedding <=> $1::vector) as similarity,
-                           created_at, access_count
+                           created_at, access_count, reinforcement_score, last_retrieved_at
                     FROM nah_remember.semantic_memories
                     WHERE user_id = $2 AND agent_id = $3 AND embedding IS NOT NULL
                     ORDER BY embedding <=> $1::vector
@@ -849,7 +868,7 @@ class NahMemoryMCPServer:
                 sql = """
                     SELECT id, content, memory_type, category, tags, metadata,
                            1 - (embedding <=> $1::vector) as similarity,
-                           created_at, access_count
+                           created_at, access_count, reinforcement_score, last_retrieved_at
                     FROM nah_remember.semantic_memories
                     WHERE user_id = $2 AND embedding IS NOT NULL
                     ORDER BY embedding <=> $1::vector
@@ -863,7 +882,7 @@ class NahMemoryMCPServer:
                 async with self.pool.acquire() as conn:
                     for r in results:
                         await conn.execute(
-                            "UPDATE nah_remember.semantic_memories SET access_count = access_count + 1, last_accessed_at = NOW() WHERE id = $1",
+                            "UPDATE nah_remember.semantic_memories SET access_count = access_count + 1, last_accessed_at = NOW(), reinforcement_score = LEAST(reinforcement_score + 0.05, 1.0), last_retrieved_at = NOW() WHERE id = $1",
                             r["id"],
                         )
 
@@ -894,7 +913,7 @@ class NahMemoryMCPServer:
             if agent_id:
                 query = """
                     SELECT id, content, memory_type, category, tags, metadata,
-                           created_at, access_count, importance_score
+                           created_at, access_count, importance_score, reinforcement_score, last_retrieved_at
                     FROM nah_remember.semantic_memories
                     WHERE user_id = $1 AND agent_id = $2
                     ORDER BY importance_score DESC, created_at DESC
@@ -1204,6 +1223,104 @@ class NahMemoryMCPServer:
             raise
 
     # ==================== COHERENCE CHECK ====================
+
+    async def negative_search(self, query: str, limit: int = 10) -> Dict:
+        """
+        Search negative constraints by matching trigger_context.
+
+        Returns ordered warnings for known failure patterns that match
+        the query context. Used by agents before plan execution to avoid
+        repeating past mistakes.
+
+        Args:
+            query: Natural language query describing the planned action
+            limit: Max constraints to return (default 10)
+
+        Returns:
+            Dict with matched constraints and their severities
+        """
+        try:
+            tsquery = " & ".join(query.split()[:10])
+            sql = """
+                SELECT id, pattern, trigger_context, severity, weight,
+                       hit_count, last_hit_at, created_at
+                FROM nah_remember.negative_constraints
+                WHERE to_tsvector('english', trigger_context) @@ to_tsquery('english', $1)
+                   OR to_tsvector('english', pattern) @@ to_tsquery('english', $1)
+                ORDER BY weight DESC, hit_count DESC
+                LIMIT $2
+            """
+            async with self.pool.acquire() as conn:
+                results = await conn.fetch(sql, tsquery, limit)
+
+            return {
+                "success": True,
+                "constraints": [
+                    {
+                        "id": str(r["id"]),
+                        "pattern": r["pattern"][:200],
+                        "severity": r["severity"],
+                        "weight": float(r["weight"]),
+                        "hit_count": r["hit_count"],
+                        "created_at": r["created_at"].isoformat(),
+                    }
+                    for r in results
+                ],
+                "count": len(results),
+            }
+        except Exception as e:
+            logger.error(f"negative_search failed: {e}")
+            return {"success": False, "error": str(e), "constraints": [], "count": 0}
+
+    async def decay_memories(self, dry_run: bool = False) -> Dict:
+        """Eviction and apoptosis — soft-delete stale memories, condense old episodes."""
+        results = {"soft_deleted": 0, "hard_deleted": 0, "condensed": 0, "errors": []}
+        try:
+            async with self.pool.acquire() as conn:
+                soft = await conn.execute("""
+                    UPDATE nah_remember.semantic_memories
+                    SET archived = true, updated_at = NOW()
+                    WHERE (importance_score < 0.1 OR importance_score IS NULL)
+                      AND (reinforcement_score < 0.1 OR reinforcement_score IS NULL)
+                      AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '90 days')
+                      AND (archived IS NULL OR archived = false)
+                """)
+                if not dry_run:
+                    s = str(soft).split()[-1] if hasattr(soft, "split") else "0"
+                    results["soft_deleted"] = int(s) if s.isdigit() else 0
+
+                hard = await conn.execute("""
+                    DELETE FROM nah_remember.semantic_memories
+                    WHERE (importance_score < 0.05 OR importance_score IS NULL)
+                      AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '180 days')
+                      AND archived = true
+                """)
+                if not dry_run:
+                    h = str(hard).split()[-1] if hasattr(hard, "split") else "0"
+                    results["hard_deleted"] = int(h) if h.isdigit() else 0
+
+                cond = await conn.execute("""
+                    UPDATE nah_remember.context_snapshots
+                    SET context_data = jsonb_build_object(
+                        'condensed', true,
+                        'original', substring(context_data::text, 1, 500)
+                    )
+                    WHERE created_at < NOW() - INTERVAL '90 days'
+                      AND (context_data->>'condensed' IS NULL OR context_data->>'condensed' != 'true')
+                """)
+                if not dry_run:
+                    c = str(cond).split()[-1] if hasattr(cond, "split") else "0"
+                    results["condensed"] = int(c) if c.isdigit() else 0
+
+            results["success"] = True
+            logger.info(
+                f"Phase E: soft={results['soft_deleted']} hard={results['hard_deleted']} condensed={results['condensed']}"
+            )
+        except Exception as e:
+            logger.error(f"Phase E decay failed: {e}")
+            results["success"] = False
+            results["errors"].append(str(e))
+        return results
 
     async def coherence_check(self, query: str, limit: int = 5) -> Dict:
         """
@@ -1578,8 +1695,12 @@ class MCPHandler:
             "nah_unified_search": self.server.unified_search,
             # Stats
             "nah_stats": self.server.get_stats,
+            # Negative constraints (Phase C)
+            "nah_remember_negative_search": self.server.negative_search,
             # Coherence check (Phase 3)
             "nah_coherence_check": self.server.coherence_check,
+            # Phase E: Memory decay / eviction
+            "nah_memory_decay": self.server.decay_memories,
             # Cookbook-canonical save_memory (NAH-388 / #191)
             "save_memory": self._handle_save_memory,
         }
@@ -1976,6 +2097,45 @@ class MCPHandler:
                         },
                     },
                     "required": ["key", "value", "category"],
+                },
+            },
+            {
+                "name": "nah_remember_negative_search",
+                "description": (
+                    "Search negative constraints by trigger context for failure avoidance. "
+                    "Returns known failure patterns matching the query context. "
+                    "Use BEFORE executing a plan to avoid repeating past mistakes."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Context describing the planned action",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max constraints to return (default 10)",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "nah_memory_decay",
+                "description": (
+                    "Eviction and apoptosis: soft-delete stale memories, hard-delete archived ones, "
+                    "condense old context snapshots. Use --dry-run to preview without changes."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Preview only — no changes made",
+                        },
+                    },
+                    "required": [],
                 },
             },
             {
