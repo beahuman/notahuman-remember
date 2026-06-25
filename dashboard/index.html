@@ -1,0 +1,59 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>nah-remember — memory health</title>
+<style>
+:root{--bg:#0b0d14;--panel:#121624;--panel2:#0e1220;--line:#222a3d;--text:#e6ebf5;--muted:#8a95ad;--dim:#5d6884;
+--green:#3fd17a;--greenbg:#11301f;--amber:#f0b245;--amberbg:#332512;--blue:#5aa9ff;--purple:#a880ff;--cyan:#43d6c4;
+--mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#141a2c,var(--bg) 60%);color:var(--text);font-family:var(--sans);line-height:1.5}
+.wrap{max-width:1120px;margin:0 auto;padding:32px 24px 64px}
+header{display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:26px}
+h1{font-family:var(--mono);font-size:27px;margin:0}.k{color:var(--purple)}.sub{color:var(--muted);font-size:13.5px;margin-top:6px;max-width:560px}
+.badge{display:inline-flex;align-items:center;gap:7px;background:var(--amberbg);color:var(--amber);border:1px solid #4a3a16;border-radius:999px;padding:6px 12px;font-family:var(--mono);font-size:12px;font-weight:600}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:22px 0 28px}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:13px;padding:16px}
+.card .v{font-family:var(--mono);font-size:26px;font-weight:700}.card .l{color:var(--muted);font-size:11.5px;margin-top:3px}.card .s{color:var(--dim);font-size:10.5px;margin-top:6px;font-family:var(--mono)}
+.card.purple .v{color:var(--purple)}.card.cyan .v{color:var(--cyan)}.card.blue .v{color:var(--blue)}.card.green .v{color:var(--green)}
+h2{font-family:var(--mono);font-size:12.5px;letter-spacing:1.3px;text-transform:uppercase;color:var(--muted);margin:30px 0 12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:20px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}th{text-align:left;color:var(--dim);font-family:var(--mono);font-size:10.5px;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid #1a2030;font-family:var(--mono)}.bar{height:7px;background:#0e1220;border-radius:5px;overflow:hidden;margin-top:4px}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--purple),var(--cyan))}
+.layers{display:flex;gap:8px;flex-wrap:wrap}.layer{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
+.layer .t{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--cyan)}.layer .d{font-size:10.5px;color:var(--muted);margin-top:4px}
+.note{display:flex;gap:11px;background:var(--amberbg);border:1px solid #4a3a16;border-radius:11px;padding:13px 15px;margin-top:14px;font-size:12px;color:#f3d8a6}
+footer{margin-top:36px;color:var(--dim);font-size:11.5px;font-family:var(--mono);border-top:1px solid var(--line);padding-top:14px}
+</style></head><body><div class="wrap">
+<header><div><h1>nah&#8209;<span class="k">remember</span> — memory health</h1>
+<div class="sub">Long-term cross-session memory · PostgreSQL + pgvector · shared 1024-dim substrate with nah-knows.</div></div>
+<div style="text-align:right"><span class="badge">&#9888; restart-pending (pre-#488)</span></div></header>
+
+<div class="stats">
+  <div class="card purple"><div class="v">666</div><div class="l">semantic memories</div><div class="s">vector(1024) · IVFFlat</div></div>
+  <div class="card cyan"><div class="v">15</div><div class="l">entities</div></div>
+  <div class="card blue"><div class="v">9</div><div class="l">messages</div></div>
+  <div class="card green"><div class="v">1</div><div class="l">procedures</div></div>
+  <div class="card"><div class="v">1024</div><div class="l">embedding dim</div><div class="s">mistral-embed · shared w/ nah-knows</div></div>
+</div>
+
+<h2>Schema (nah_remember · same Postgres as nah_knows)</h2>
+<div class="panel"><table>
+  <thead><tr><th>table</th><th>rows</th><th>fill</th></tr></thead>
+  <tbody>
+    <tr><td>semantic_memories</td><td>666</td><td style="width:55%"><div class="bar"><i style="width:100%"></i></div></td></tr>
+    <tr><td>entities</td><td>15</td><td><div class="bar"><i style="width:9%"></i></div></td></tr>
+    <tr><td>messages</td><td>9</td><td><div class="bar"><i style="width:5%"></i></div></td></tr>
+    <tr><td>procedures</td><td>1</td><td><div class="bar"><i style="width:2%"></i></div></td></tr>
+  </tbody>
+</table></div>
+
+<h2>5-layer memory model</h2>
+<div class="panel"><div class="layers">
+  <div class="layer"><div class="t">Ephemeral</div><div class="d">in-session, not stored</div></div>
+  <div class="layer"><div class="t">Episodic</div><div class="d">nah-remember · 2+ sessions</div></div>
+  <div class="layer"><div class="t">Semantic</div><div class="d">nah-knows · 3+ reps</div></div>
+  <div class="layer"><div class="t">Historical</div><div class="d">nah-knows archive</div></div>
+  <div class="layer"><div class="t">Archival</div><div class="d">cold · &gt;30d no retrieval</div></div>
+</div>
+<div class="note"><span>&#9888;</span><div>nah-remember is <b>live and restart-fragile</b> (running pre-#488 code; <span class="mono">gateway_reload_tools</span> re-triggers a bug). All M6 work touching it is <b>additive/online</b>; any restart requires CEO advance-notice (program §C.3). Shared-substrate unification with nah-knows = M6 phase P5.</div></div></div>
+
+<footer>nah-remember · 666 semantic / 15 entities · vector(1024) · source psql nah_remember.* · snapshot 2026-06-25</footer>
+</div></body></html>
