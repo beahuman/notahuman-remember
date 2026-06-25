@@ -788,7 +788,22 @@ class NahMemoryMCPServer:
         """Add a semantic memory (replaces mem0_add_memory)"""
         try:
             embedding = await self.generate_embedding(content)
-            embedding_str = self._format_vector(embedding) if embedding else None
+            # R1 (write integrity): NEVER persist a NULL-embedding row as success — a memory that is
+            # stored but unsearchable is silent, unrecoverable data loss (LESSON-10). Fail LOUD so the
+            # caller can retry; embed reliability (retry/backoff + key isolation) is hardened separately
+            # in generate_embedding (R2). Invariant: no post-cutover row has NULL embedding + content.
+            if embedding is None:
+                logger.error(
+                    "memory_add: embedding unavailable "
+                    f"(content len={len(content)}, user={user_id}) — refusing NULL-as-success insert"
+                )
+                return {
+                    "success": False,
+                    "error": "embedding_unavailable",
+                    "has_embedding": False,
+                    "content": content,
+                }
+            embedding_str = self._format_vector(embedding)
             metadata_json = json.dumps(metadata) if metadata else "{}"
             tags_arr = tags or []
 
