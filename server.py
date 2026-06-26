@@ -53,6 +53,12 @@ EMBEDDING_API_KEY = os.getenv("VK_NAH_REMEMBER_FREE", "") or NAH_MODEL_GATEWAY_K
 EMBEDDING_DIM = int(
     os.getenv("EMBEDDING_DIM", "1024")
 )  # DB column is vector(1024); Mistral natively returns 1024-dim
+# R5 (#564): bound DB waits so a saturated pool fails FAST (typed timeout) instead of hanging
+# forever under concurrent agent load — the indefinite-hang -> agents-waiting-on-each-other
+# deadlock pattern. command_timeout bounds any single query; the acquire timeout bounds the wait
+# for a free connection (the 21st concurrent acquire raises instead of blocking).
+POOL_ACQUIRE_TIMEOUT = float(os.getenv("NAH_REMEMBER_POOL_ACQUIRE_TIMEOUT", "10"))
+COMMAND_TIMEOUT = float(os.getenv("NAH_REMEMBER_COMMAND_TIMEOUT", "30"))
 
 
 class NahMemoryMCPServer:
@@ -79,7 +85,9 @@ class NahMemoryMCPServer:
     async def setup(self):
         """Initialize connection pool and HTTP client"""
         try:
-            self.pool = await asyncpg.create_pool(self.db_url, min_size=2, max_size=20)
+            self.pool = await asyncpg.create_pool(
+                self.db_url, min_size=2, max_size=20, command_timeout=COMMAND_TIMEOUT
+            )
             self.http_client = httpx.AsyncClient(timeout=30.0)
             logger.info(f"PostgreSQL pool created: {self.db_url}")
             logger.info(f"Bifrost endpoint: {NAH_MODEL_GATEWAY_URL}")
@@ -87,7 +95,7 @@ class NahMemoryMCPServer:
                 f"Embedding model: {EMBEDDING_MODEL} (fallback: {EMBEDDING_MODEL_FALLBACK})"
             )
             # Ensure negative_constraints table exists (Phase C)
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS nah_remember.negative_constraints (
                         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,7 +130,9 @@ class NahMemoryMCPServer:
         self.db_url = self._resolve_db_url()
         logger.warning(f"Pool is None — attempting lazy initialization with db_url={self.db_url!r}")
         try:
-            self.pool = await asyncpg.create_pool(self.db_url, min_size=2, max_size=20)
+            self.pool = await asyncpg.create_pool(
+                self.db_url, min_size=2, max_size=20, command_timeout=COMMAND_TIMEOUT
+            )
             logger.info(f"Lazy pool initialization succeeded: {self.db_url}")
         except Exception as e:
             logger.error(f"Lazy pool initialization failed (db_url={self.db_url!r}): {e}")
@@ -234,7 +244,7 @@ class NahMemoryMCPServer:
                 RETURNING id, session_id, application, user_id, status, created_at, updated_at
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(
                     query,
                     session_id,
@@ -268,7 +278,7 @@ class NahMemoryMCPServer:
                 RETURNING session_id, status, ended_at, total_messages
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(query, session_id, summary)
 
             if result:
@@ -290,7 +300,7 @@ class NahMemoryMCPServer:
         try:
             query = "SELECT * FROM nah_remember.get_session_context($1, $2)"
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(query, session_id, message_limit)
 
             return {
@@ -322,7 +332,7 @@ class NahMemoryMCPServer:
         try:
             # Get next message index if not provided
             if message_index is None:
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     result = await conn.fetchval(
                         "SELECT COALESCE(MAX(message_index), 0) + 1 FROM nah_remember.messages WHERE session_id = $1",
                         session_id,
@@ -361,7 +371,7 @@ class NahMemoryMCPServer:
 
             embedding_str = self._format_vector(embedding) if embedding else None
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(
                     query,
                     session_id,
@@ -415,7 +425,7 @@ class NahMemoryMCPServer:
                     ORDER BY embedding <=> $1::vector
                     LIMIT $3
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(query, embedding_str, session_id, limit)
             else:
                 query = """
@@ -427,7 +437,7 @@ class NahMemoryMCPServer:
                     ORDER BY embedding <=> $1::vector
                     LIMIT $2
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(query, embedding_str, limit)
 
             return {
@@ -480,7 +490,7 @@ class NahMemoryMCPServer:
                 RETURNING id, snapshot_type, created_at
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(
                     query,
                     session_id,
@@ -555,7 +565,7 @@ class NahMemoryMCPServer:
                 RETURNING id, name, entity_type, created_at, updated_at
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(
                     query,
                     name,
@@ -589,7 +599,7 @@ class NahMemoryMCPServer:
                           created_at, updated_at, access_count, importance_score
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(query, name)
 
             if result:
@@ -632,7 +642,7 @@ class NahMemoryMCPServer:
                     ORDER BY embedding <=> $1::vector
                     LIMIT $3
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(query, embedding_str, entity_type, limit)
             else:
                 query = """
@@ -643,7 +653,7 @@ class NahMemoryMCPServer:
                     ORDER BY embedding <=> $1::vector
                     LIMIT $2
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(query, embedding_str, limit)
 
             return {
@@ -674,7 +684,7 @@ class NahMemoryMCPServer:
                 WHERE entity_type = $2 AND (name ILIKE $1 OR description ILIKE $1)
                 LIMIT $3
             """
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 results = await conn.fetch(query, f"%{query_text}%", entity_type, limit)
         else:
             query = """
@@ -683,7 +693,7 @@ class NahMemoryMCPServer:
                 WHERE name ILIKE $1 OR description ILIKE $1
                 LIMIT $2
             """
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 results = await conn.fetch(query, f"%{query_text}%", limit)
 
         return {
@@ -716,7 +726,7 @@ class NahMemoryMCPServer:
             metadata_json = json.dumps(metadata) if metadata else "{}"
 
             # Get or create source entity
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 source = await conn.fetchrow(
                     "SELECT id FROM nah_remember.entities WHERE name = $1", source_name
                 )
@@ -787,7 +797,7 @@ class NahMemoryMCPServer:
                 ORDER BY r.created_at DESC
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 results = await conn.fetch(query, entity_name)
 
             return {
@@ -853,7 +863,7 @@ class NahMemoryMCPServer:
                 RETURNING id, user_id, created_at
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 result = await conn.fetchrow(
                     query,
                     user_id,
@@ -915,7 +925,7 @@ class NahMemoryMCPServer:
                     ORDER BY embedding <=> $1::vector
                     LIMIT $4
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(sql, embedding_str, user_id, agent_id, limit)
             else:
                 sql = """
@@ -927,12 +937,12 @@ class NahMemoryMCPServer:
                     ORDER BY embedding <=> $1::vector
                     LIMIT $3
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(sql, embedding_str, user_id, limit)
 
             # Update access counts
             if results:
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     for r in results:
                         await conn.execute(
                             "UPDATE nah_remember.semantic_memories SET access_count = access_count + 1, last_accessed_at = NOW(), reinforcement_score = LEAST(reinforcement_score + 0.05, 1.0), last_retrieved_at = NOW() WHERE id = $1",
@@ -971,7 +981,7 @@ class NahMemoryMCPServer:
                     WHERE user_id = $1 AND agent_id = $2
                     ORDER BY importance_score DESC, created_at DESC
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(query, user_id, agent_id)
             else:
                 query = """
@@ -981,7 +991,7 @@ class NahMemoryMCPServer:
                     WHERE user_id = $1
                     ORDER BY importance_score DESC, created_at DESC
                 """
-                async with self.pool.acquire() as conn:
+                async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                     results = await conn.fetch(query, user_id)
 
             return {
@@ -1014,7 +1024,7 @@ class NahMemoryMCPServer:
         """Update a semantic memory"""
         try:
             # Get current version
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 current = await conn.fetchrow(
                     "SELECT content FROM nah_remember.semantic_memories WHERE id = $1",
                     uuid.UUID(memory_id),
@@ -1094,7 +1104,7 @@ class NahMemoryMCPServer:
     async def memory_delete(self, memory_id: str, user_id: str = "default_user") -> Dict:
         """Delete a semantic memory"""
         try:
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 # Get content for history
                 current = await conn.fetchrow(
                     "SELECT content FROM nah_remember.semantic_memories WHERE id = $1",
@@ -1142,7 +1152,7 @@ class NahMemoryMCPServer:
                 ORDER BY version DESC
             """
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 results = await conn.fetch(query, uuid.UUID(memory_id))
 
             return {
@@ -1182,7 +1192,7 @@ class NahMemoryMCPServer:
 
             results = []
 
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 if "messages" in memory_types:
                     results.extend(
                         await conn.fetch(
@@ -1316,7 +1326,7 @@ class NahMemoryMCPServer:
                 ORDER BY weight DESC, hit_count DESC
                 LIMIT $2
             """
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 results = await conn.fetch(sql, tsquery, limit)
 
             return {
@@ -1342,7 +1352,7 @@ class NahMemoryMCPServer:
         """Eviction and apoptosis — soft-delete stale memories, condense old episodes."""
         results = {"soft_deleted": 0, "hard_deleted": 0, "condensed": 0, "errors": []}
         try:
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 soft = await conn.execute("""
                     UPDATE nah_remember.semantic_memories
                     SET archived = true, updated_at = NOW()
@@ -1420,7 +1430,7 @@ class NahMemoryMCPServer:
 
             # 2. Query nah-remember: semantic memories + entities
             remember_results = []
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 # Semantic memories
                 sem_rows = await conn.fetch(
                     """
@@ -1690,7 +1700,7 @@ class NahMemoryMCPServer:
         """Get memory system statistics"""
         try:
             stats = {}
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
                 # Table counts
                 for table in [
                     "sessions",
