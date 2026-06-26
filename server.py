@@ -318,6 +318,18 @@ class NahMemoryMCPServer:
             embedding = None
             if generate_embedding and content:
                 embedding = await self.generate_embedding(content)
+                if embedding is None:
+                    # R1b (write integrity, #564): embedding was REQUESTED but failed — refuse to
+                    # persist a silently-unsearchable message as success. (A NULL embedding is only
+                    # legitimate when generate_embedding is False, i.e. not requested.)
+                    logger.error(
+                        "message_save: requested embedding unavailable — refusing NULL-as-success insert"
+                    )
+                    return {
+                        "success": False,
+                        "error": "embedding_unavailable",
+                        "has_embedding": False,
+                    }
 
             tool_calls_json = json.dumps(tool_calls) if tool_calls else None
             tool_results_json = json.dumps(tool_results) if tool_results else None
@@ -499,6 +511,17 @@ class NahMemoryMCPServer:
             if generate_embedding:
                 embed_text = f"{name}: {description}" if description else name
                 embedding = await self.generate_embedding(embed_text)
+                if embedding is None:
+                    # R1b (write integrity, #564): embedding requested but failed — refuse to persist
+                    # a silently-unsearchable entity as success.
+                    logger.error(
+                        "entity_add: requested embedding unavailable — refusing NULL-as-success insert"
+                    )
+                    return {
+                        "success": False,
+                        "error": "embedding_unavailable",
+                        "has_embedding": False,
+                    }
 
             metadata_json = json.dumps(metadata) if metadata else "{}"
             embedding_str = self._format_vector(embedding) if embedding else None
@@ -992,7 +1015,20 @@ class NahMemoryMCPServer:
 
                 # Generate new embedding
                 embedding = await self.generate_embedding(content)
-                embedding_str = self._format_vector(embedding) if embedding else None
+                if embedding is None:
+                    # R1b (write integrity, #564): on UPDATE, a failed embedding would SET embedding=NULL
+                    # — wiping a previously-searchable memory AND desyncing content vs vector. Refuse the
+                    # update and keep the prior good row intact.
+                    logger.error(
+                        f"memory_update: embedding unavailable for {memory_id} — refusing update that "
+                        "would null the existing embedding"
+                    )
+                    return {
+                        "success": False,
+                        "error": "embedding_unavailable",
+                        "has_embedding": False,
+                    }
+                embedding_str = self._format_vector(embedding)
                 metadata_json = json.dumps(metadata) if metadata else None
 
                 # Update memory
