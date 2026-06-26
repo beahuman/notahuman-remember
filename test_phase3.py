@@ -123,11 +123,11 @@ class TestPhase3:
         """Test ephemeral layer query"""
         print("\nTest: Ephemeral layer query...")
         try:
-            # Create a dummy embedding (1536-dim, all zeros)
-            dummy_embedding = [0.0] * 1536
+            # Create a dummy embedding (1024-dim, all zeros)
+            dummy_embedding = [0.0] * 1024
 
             results = await self.phase3.query_ephemeral(
-                dummy_embedding, embedding_dim=1536, hours=24, limit=5
+                dummy_embedding, embedding_dim=1024, hours=24, limit=5
             )
 
             print(f"  ✅ Ephemeral query returned {len(results)} results")
@@ -142,9 +142,9 @@ class TestPhase3:
         """Test episodic layer query"""
         print("\nTest: Episodic layer query...")
         try:
-            dummy_embedding = [0.0] * 1536
+            dummy_embedding = [0.0] * 1024
 
-            results = await self.phase3.query_episodic(dummy_embedding, embedding_dim=1536, limit=5)
+            results = await self.phase3.query_episodic(dummy_embedding, embedding_dim=1024, limit=5)
 
             print(f"  ✅ Episodic query returned {len(results)} results")
             if results:
@@ -158,9 +158,9 @@ class TestPhase3:
         """Test semantic layer query"""
         print("\nTest: Semantic layer query...")
         try:
-            dummy_embedding = [0.0] * 1536
+            dummy_embedding = [0.0] * 1024
 
-            results = await self.phase3.query_semantic(dummy_embedding, embedding_dim=1536, limit=5)
+            results = await self.phase3.query_semantic(dummy_embedding, embedding_dim=1024, limit=5)
 
             print(f"  ✅ Semantic query returned {len(results)} results")
             if results:
@@ -188,13 +188,13 @@ class TestPhase3:
         """Test unified ranked search across all layers"""
         print("\nTest: Unified ranked search (all layers)...")
         try:
-            dummy_embedding = [0.0] * 1536
+            dummy_embedding = [0.0] * 1024
 
             result = await self.phase3.remember_search_ranked(
                 dummy_embedding,
                 memory_type="all",
                 limit=20,
-                embedding_dim=1536,
+                embedding_dim=1024,
                 significance_weight=0.4,
                 access_weight=0.3,
                 recency_weight=0.3,
@@ -227,10 +227,10 @@ class TestPhase3:
         """Test ranked search with single layer filter"""
         print("\nTest: Ranked search (semantic layer only)...")
         try:
-            dummy_embedding = [0.0] * 1536
+            dummy_embedding = [0.0] * 1024
 
             result = await self.phase3.remember_search_ranked(
-                dummy_embedding, memory_type="semantic", limit=10, embedding_dim=1536
+                dummy_embedding, memory_type="semantic", limit=10, embedding_dim=1024
             )
 
             assert result["success"], f"Query failed: {result.get('error')}"
@@ -253,7 +253,7 @@ class TestPhase3:
         """Test that ranking is deterministic and consistent"""
         print("\nTest: Ranking consistency...")
         try:
-            dummy_embedding = [0.0] * 1536
+            dummy_embedding = [0.0] * 1024
 
             # Run same query twice
             result1 = await self.phase3.remember_search_ranked(
@@ -289,7 +289,7 @@ class TestPhase3:
         """Test that weights are normalized correctly"""
         print("\nTest: Weight normalization...")
         try:
-            dummy_embedding = [0.0] * 1536
+            dummy_embedding = [0.0] * 1024
 
             # Use unnormalized weights (sum != 1.0)
             result = await self.phase3.remember_search_ranked(

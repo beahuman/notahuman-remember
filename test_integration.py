@@ -42,7 +42,7 @@ async def test_all():
                 "Authorization": f"Bearer {os.getenv('NAH_MODEL_GATEWAY_KEY', '')}",
                 "Content-Type": "application/json",
             },
-            json={"model": "text-embedding-3-small", "input": "integration test"},
+            json={"model": "embedding-primary", "input": "integration test"},
             timeout=30.0,
         )
         data = response.json()

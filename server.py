@@ -4,7 +4,7 @@ NAH Memory Unified MCP Server
 Consolidates mem0, rag-memory, and episodic-memory into a single PostgreSQL-backed system.
 
 Storage: PostgreSQL nah_remember schema with pgvector embeddings
-Embedding: Bifrost gateway with OpenAI text-embedding-3-small/large aliases
+Embedding: Bifrost gateway — embedding-primary (mistral-embed, 1024-dim) + embedding-large fallback
 
 Tables:
 - sessions: Session tracking across applications

@@ -49,7 +49,7 @@ new_server = {
         "NAH_MODEL_GATEWAY_URL": "http://localhost:4000",
         "EMBEDDING_MODEL": "embedding-primary",
         "EMBEDDING_MODEL_FALLBACK": "embedding-large",
-        "EMBEDDING_DIM": "1536"
+        "EMBEDDING_DIM": "1024"
     }
 }
 

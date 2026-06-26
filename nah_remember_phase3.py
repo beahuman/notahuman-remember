@@ -14,6 +14,7 @@ Ranking formula: significance_score × 0.3 + access_count × 0.2 + recency × 0.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Literal
 from enum import Enum
@@ -21,6 +22,12 @@ from enum import Enum
 import asyncpg
 
 logger = logging.getLogger(__name__)
+
+# Single source of truth for embedding dimension. Must match server.py EMBEDDING_DIM and the
+# live pgvector columns: mistral-embed natively returns 1024-dim. Overridable via env for
+# alternate embedders. Defaulting here prevents the 1536/1024 drift that silently breaks
+# phase3 distance queries (`embedding <=> $1::vector`) against the 1024-dim columns.
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 
 
 class MemoryLayer(str, Enum):
@@ -158,7 +165,7 @@ class NahRememberPhase3:
     async def query_ephemeral(
         self,
         query_embedding: List[float],
-        embedding_dim: int = 1536,
+        embedding_dim: int = EMBEDDING_DIM,
         hours: int = 24,
         limit: int = 10,
     ) -> List[RankedResult]:
@@ -212,7 +219,7 @@ class NahRememberPhase3:
             return []
 
     async def query_episodic(
-        self, query_embedding: List[float], embedding_dim: int = 1536, limit: int = 10
+        self, query_embedding: List[float], embedding_dim: int = EMBEDDING_DIM, limit: int = 10
     ) -> List[RankedResult]:
         """
         Query episodic layer: context snapshots + entities
@@ -294,7 +301,7 @@ class NahRememberPhase3:
             return []
 
     async def query_semantic(
-        self, query_embedding: List[float], embedding_dim: int = 1536, limit: int = 10
+        self, query_embedding: List[float], embedding_dim: int = EMBEDDING_DIM, limit: int = 10
     ) -> List[RankedResult]:
         """
         Query semantic layer: semantic memories + procedures
@@ -460,7 +467,7 @@ class NahRememberPhase3:
         query_embedding: List[float],
         memory_type: Literal["ephemeral", "episodic", "semantic", "meta", "all"] = "all",
         limit: int = 10,
-        embedding_dim: int = 1536,
+        embedding_dim: int = EMBEDDING_DIM,
         significance_weight: float = 0.4,
         access_weight: float = 0.3,
         recency_weight: float = 0.3,
@@ -472,7 +479,7 @@ class NahRememberPhase3:
             query_embedding: Query vector (pre-embedded)
             memory_type: Filter by layer (ephemeral|episodic|semantic|meta|all)
             limit: Results per layer
-            embedding_dim: Embedding dimension (default 1536 for OpenAI)
+            embedding_dim: Embedding dimension (default EMBEDDING_DIM env = 1024, mistral-embed)
             significance_weight: Weight for significance score (0.0-1.0)
             access_weight: Weight for access count (0.0-1.0)
             recency_weight: Weight for recency (0.0-1.0)
@@ -565,7 +572,7 @@ class NahRememberPhase3:
     # ==================== HELPER METHODS ====================
 
     @staticmethod
-    def _format_vector(embedding: List[float], dim: int = 1536) -> str:
+    def _format_vector(embedding: List[float], dim: int = EMBEDDING_DIM) -> str:
         """Format embedding as PostgreSQL vector string"""
         # Truncate or pad to correct dimension
         if len(embedding) > dim:
@@ -590,7 +597,7 @@ def add_phase3_tools_to_mcp(mcp_handler_tools: Dict[str, Any], phase3: NahRememb
         query_embedding: List[float],
         memory_type: str = "all",
         limit: int = 10,
-        embedding_dim: int = 1536,
+        embedding_dim: int = EMBEDDING_DIM,
         significance_weight: float = 0.4,
         access_weight: float = 0.3,
         recency_weight: float = 0.3,
