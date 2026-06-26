@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS nah_remember.messages (
     token_count INTEGER DEFAULT 0,
     importance_score FLOAT DEFAULT 0.5,
     metadata JSONB DEFAULT '{}',
-    embedding vector(1536),  -- OpenAI text-embedding-3-small
+    embedding vector(1024),  -- mistral-embed (1024-dim); keep in sync with server EMBEDDING_DIM
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(session_id, message_index)
 );
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS nah_remember.entities (
     description TEXT,
     source_session_id VARCHAR(255),
     metadata JSONB DEFAULT '{}',
-    embedding vector(1536),
+    embedding vector(1024),
     importance_score FLOAT DEFAULT 0.5,
     access_count INTEGER DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS nah_remember.semantic_memories (
     tags TEXT[],
     metadata JSONB DEFAULT '{}',
     importance_score FLOAT DEFAULT 0.5,
-    embedding vector(1536),
+    embedding vector(1024),
     access_count INTEGER DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS nah_remember.procedures (
     trigger_patterns TEXT[],
     success_rate FLOAT DEFAULT 0.0,
     execution_count INTEGER DEFAULT 0,
-    embedding vector(1536),
+    embedding vector(1024),
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -205,7 +205,7 @@ $$ LANGUAGE plpgsql;
 
 -- Function for unified semantic search
 CREATE OR REPLACE FUNCTION nah_remember.semantic_search(
-    p_embedding vector(1536),
+    p_embedding vector(1024),
     p_memory_types TEXT[],
     p_limit_per_type INTEGER DEFAULT 5
 )
