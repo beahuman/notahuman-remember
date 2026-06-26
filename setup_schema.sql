@@ -221,42 +221,42 @@ BEGIN
     RETURN QUERY
     
     -- Search messages
-    SELECT 'messages'::TEXT, m.message_id::TEXT, m.content,
+    (SELECT 'messages'::TEXT, m.message_id::TEXT, m.content,
            1 - (m.embedding <=> p_embedding)::FLOAT, m.metadata, m.created_at
     FROM nah_remember.messages m
     WHERE 'messages' = ANY(p_memory_types) AND m.embedding IS NOT NULL
     ORDER BY m.embedding <=> p_embedding
-    LIMIT p_limit_per_type
+    LIMIT p_limit_per_type)
     
     UNION ALL
     
     -- Search entities
-    SELECT 'entities'::TEXT, e.id::TEXT, e.description,
+    (SELECT 'entities'::TEXT, e.id::TEXT, e.description,
            1 - (e.embedding <=> p_embedding)::FLOAT, e.metadata, e.created_at
     FROM nah_remember.entities e
     WHERE 'entities' = ANY(p_memory_types) AND e.embedding IS NOT NULL
     ORDER BY e.embedding <=> p_embedding
-    LIMIT p_limit_per_type
+    LIMIT p_limit_per_type)
     
     UNION ALL
     
     -- Search semantic memories
-    SELECT 'semantic'::TEXT, sm.id::TEXT, sm.content,
+    (SELECT 'semantic'::TEXT, sm.id::TEXT, sm.content,
            1 - (sm.embedding <=> p_embedding)::FLOAT, sm.metadata, sm.created_at
     FROM nah_remember.semantic_memories sm
     WHERE 'semantic' = ANY(p_memory_types) AND sm.embedding IS NOT NULL
     ORDER BY sm.embedding <=> p_embedding
-    LIMIT p_limit_per_type
+    LIMIT p_limit_per_type)
     
     UNION ALL
     
     -- Search procedures
-    SELECT 'procedures'::TEXT, p.id::TEXT, p.description,
+    (SELECT 'procedures'::TEXT, p.id::TEXT, p.description,
            1 - (p.embedding <=> p_embedding)::FLOAT, p.metadata, p.created_at
     FROM nah_remember.procedures p
     WHERE 'procedures' = ANY(p_memory_types) AND p.embedding IS NOT NULL
     ORDER BY p.embedding <=> p_embedding
-    LIMIT p_limit_per_type;
+    LIMIT p_limit_per_type);
 END;
 $$ LANGUAGE plpgsql;
 
