@@ -45,6 +45,11 @@ NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:400
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "embedding-primary")
 EMBEDDING_MODEL_FALLBACK = os.getenv("EMBEDDING_MODEL_FALLBACK", "embedding-large")
 NAH_MODEL_GATEWAY_KEY = os.getenv("NAH_MODEL_GATEWAY_KEY", "")
+# R2 (#564): pin the embedding auth key to the DEDICATED nah-remember virtual key. A
+# gateway-spawned child can inherit a stale/empty NAH_MODEL_GATEWAY_KEY (verified 401 in one path);
+# using it for embeddings turns every memory write into a silent failure. Prefer VK_NAH_REMEMBER_FREE
+# (resolved from launch env) so that leak path is closed. Value comes from env/vault — no secret in code.
+EMBEDDING_API_KEY = os.getenv("VK_NAH_REMEMBER_FREE", "") or NAH_MODEL_GATEWAY_KEY
 EMBEDDING_DIM = int(
     os.getenv("EMBEDDING_DIM", "1024")
 )  # DB column is vector(1024); Mistral natively returns 1024-dim
@@ -140,23 +145,33 @@ class NahMemoryMCPServer:
         """Generate an embedding through Bifrost."""
 
         async def _generate_via_bifrost(model: str) -> Optional[List[float]]:
-            response = await self.http_client.post(
-                f"{NAH_MODEL_GATEWAY_URL}/v1/embeddings",
-                headers={
-                    "Authorization": f"Bearer {NAH_MODEL_GATEWAY_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={"model": model, "input": text},
-            )
-            response.raise_for_status()
-            data = response.json()
-            if "data" in data and len(data["data"]) > 0:
-                embedding = data["data"][0].get("embedding", [])
-                logger.debug(
-                    f"Generated Bifrost embedding with {len(embedding)} dimensions using {model}"
+            # R2 (#564): bounded retry with backoff on 429 (rate limit). Previously a 429 fell straight
+            # through to None → a loud R1 failure → a dropped memory. Retrying keeps embeddings reliable.
+            delay = 1.0
+            for _attempt in range(5):
+                response = await self.http_client.post(
+                    f"{NAH_MODEL_GATEWAY_URL}/v1/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {EMBEDDING_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"model": model, "input": text},
                 )
-                return embedding
-            logger.warning(f"Unexpected Bifrost embedding response format: {data}")
+                if response.status_code == 429:
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 20.0)
+                    continue
+                response.raise_for_status()
+                data = response.json()
+                if "data" in data and len(data["data"]) > 0:
+                    embedding = data["data"][0].get("embedding", [])
+                    logger.debug(
+                        f"Generated Bifrost embedding with {len(embedding)} dimensions using {model}"
+                    )
+                    return embedding
+                logger.warning(f"Unexpected Bifrost embedding response format: {data}")
+                return None
+            logger.error("Bifrost embedding rate-limited (429) after retries")
             return None
 
         bifrost_model = EMBEDDING_MODEL_FALLBACK if use_fallback else EMBEDDING_MODEL
