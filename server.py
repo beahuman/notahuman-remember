@@ -1400,7 +1400,7 @@ class NahMemoryMCPServer:
 
     async def coherence_check(self, query: str, limit: int = 5) -> Dict:
         """
-        Phase 3 coherence check: cross-query nah-remember and nah-rag for the same concept.
+        Phase 3 coherence check: cross-query nah-remember and nah-knows for the same concept.
 
         Surfaces:
         - nah-remember results (semantic search)
@@ -2231,7 +2231,7 @@ class MCPHandler:
             {
                 "name": "nah_coherence_check",
                 "description": (
-                    "Phase 3 coherence check: cross-query nah-remember and nah-rag (GraphRAG) for the same concept. "
+                    "Phase 3 coherence check: cross-query nah-remember and nah-knows (GraphRAG) for the same concept. "
                     "Returns: nah-remember semantic results, GraphRAG entity matches, coverage score (overlap), "
                     "freshness gap (nah-remember vs GraphRAG index timestamp), and score delta. "
                     "Use to diagnose alignment between the two memory systems."
