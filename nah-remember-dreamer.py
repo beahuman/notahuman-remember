@@ -28,11 +28,8 @@ Usage:
 import asyncio
 import json
 import os
-import sys
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any
-from pathlib import Path
+from typing import Dict, List, Optional
 
 import asyncpg
 import httpx
@@ -46,7 +43,10 @@ logger = logging.getLogger("nah-remember-dreamer")
 NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:4000")
 NAH_MODEL_GATEWAY_KEY = os.getenv("NAH_MODEL_GATEWAY_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://human:@localhost/notahuman")
-LLM_MODEL = os.getenv("DREAMER_LLM_MODEL", "deepseek-v4-flash")
+# Name the routing ALIAS, not a raw model. Bifrost's policy resolves
+# "nah-remember-dreamer" to free primary -> free -> free -> deepseek-v4-flash LAST.
+# Was "deepseek-v4-flash" (raw PAID), which bypassed the policy and billed on every run.
+LLM_MODEL = os.getenv("DREAMER_LLM_MODEL", "nah-remember-dreamer")
 
 
 class DreamingPipeline:
