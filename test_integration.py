@@ -37,7 +37,7 @@ async def test_all():
         import httpx
 
         response = httpx.post(
-            os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:4000") + "/v1/embeddings",
+            os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:20128") + "/v1/embeddings",
             headers={
                 "Authorization": f"Bearer {os.getenv('NAH_MODEL_GATEWAY_KEY', '')}",
                 "Content-Type": "application/json",

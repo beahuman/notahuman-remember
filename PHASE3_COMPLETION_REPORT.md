@@ -257,7 +257,7 @@ RECENCY_SCORE (30%)
 
 ```bash
 DATABASE_URL=postgresql://...           # Existing
-LITELLM_BASE_URL=http://localhost:4000  # Existing
+LITELLM_BASE_URL=http://localhost:20128  # Existing
 EMBEDDING_DIM=1536                      # Existing
 ```
 

@@ -4,7 +4,7 @@ NAH Memory Unified MCP Server
 Consolidates mem0, rag-memory, and episodic-memory into a single PostgreSQL-backed system.
 
 Storage: PostgreSQL nah_remember schema with pgvector embeddings
-Embedding: Bifrost gateway — embedding-primary (mistral-embed, 1024-dim) + embedding-large fallback
+Embedding: OmniRoute gateway — embedding-primary (mistral-embed, 1024-dim) + embedding-large fallback
 
 Tables:
 - sessions: Session tracking across applications
@@ -40,8 +40,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Embedding configuration
-# Bifrost is the embedding path so the server stays decoupled from local model runners.
-NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:4000")
+# OmniRoute is the embedding path so the server stays decoupled from local model runners.
+NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:20128")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "embedding-primary")
 EMBEDDING_MODEL_FALLBACK = os.getenv("EMBEDDING_MODEL_FALLBACK", "embedding-large")
 NAH_MODEL_GATEWAY_KEY = os.getenv("NAH_MODEL_GATEWAY_KEY", "")
@@ -90,7 +90,7 @@ class NahMemoryMCPServer:
             )
             self.http_client = httpx.AsyncClient(timeout=30.0)
             logger.info(f"PostgreSQL pool created: {self.db_url}")
-            logger.info(f"Bifrost endpoint: {NAH_MODEL_GATEWAY_URL}")
+            logger.info(f"OmniRoute endpoint: {NAH_MODEL_GATEWAY_URL}")
             logger.info(
                 f"Embedding model: {EMBEDDING_MODEL} (fallback: {EMBEDDING_MODEL_FALLBACK})"
             )
@@ -152,9 +152,9 @@ class NahMemoryMCPServer:
     async def generate_embedding(
         self, text: str, use_fallback: bool = False
     ) -> Optional[List[float]]:
-        """Generate an embedding through Bifrost."""
+        """Generate an embedding through OmniRoute."""
 
-        async def _generate_via_bifrost(model: str) -> Optional[List[float]]:
+        async def _generate_via_omniroute(model: str) -> Optional[List[float]]:
             # R2 (#564): bounded retry with backoff on 429 (rate limit). Previously a 429 fell straight
             # through to None → a loud R1 failure → a dropped memory. Retrying keeps embeddings reliable.
             delay = 1.0
@@ -176,31 +176,31 @@ class NahMemoryMCPServer:
                 if "data" in data and len(data["data"]) > 0:
                     embedding = data["data"][0].get("embedding", [])
                     logger.debug(
-                        f"Generated Bifrost embedding with {len(embedding)} dimensions using {model}"
+                        f"Generated OmniRoute embedding with {len(embedding)} dimensions using {model}"
                     )
                     return embedding
-                logger.warning(f"Unexpected Bifrost embedding response format: {data}")
+                logger.warning(f"Unexpected OmniRoute embedding response format: {data}")
                 return None
-            logger.error("Bifrost embedding rate-limited (429) after retries")
+            logger.error("OmniRoute embedding rate-limited (429) after retries")
             return None
 
-        bifrost_model = EMBEDDING_MODEL_FALLBACK if use_fallback else EMBEDDING_MODEL
+        omniroute_model = EMBEDDING_MODEL_FALLBACK if use_fallback else EMBEDDING_MODEL
 
         try:
-            embedding = await _generate_via_bifrost(bifrost_model)
+            embedding = await _generate_via_omniroute(omniroute_model)
             if embedding:
                 return embedding
         except httpx.HTTPStatusError as e:
             if not use_fallback and e.response.status_code >= 500:
-                logger.warning(f"Primary Bifrost embedding failed, trying fallback: {e}")
+                logger.warning(f"Primary OmniRoute embedding failed, trying fallback: {e}")
                 return await self.generate_embedding(text, use_fallback=True)
-            logger.error(f"Bifrost embedding generation failed: {e}")
+            logger.error(f"OmniRoute embedding generation failed: {e}")
             return None
         except Exception as e:
             if not use_fallback:
-                logger.warning(f"Primary Bifrost embedding failed, trying fallback: {e}")
+                logger.warning(f"Primary OmniRoute embedding failed, trying fallback: {e}")
                 return await self.generate_embedding(text, use_fallback=True)
-            logger.error(f"Bifrost embedding generation failed: {e}")
+            logger.error(f"OmniRoute embedding generation failed: {e}")
             return None
 
         return None
@@ -1725,7 +1725,7 @@ class NahMemoryMCPServer:
             return {
                 "success": True,
                 "stats": stats,
-                "bifrost_endpoint": NAH_MODEL_GATEWAY_URL,
+                "omniroute_endpoint": NAH_MODEL_GATEWAY_URL,
                 "embedding_model": EMBEDDING_MODEL,
                 "embedding_dim": EMBEDDING_DIM,
             }

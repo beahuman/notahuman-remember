@@ -4,7 +4,7 @@
 # Async PostgreSQL driver with pgvector support
 asyncpg>=0.29.0
 
-# HTTP client for Bifrost embedding requests
+# HTTP client for OmniRoute embedding requests
 httpx>=0.25.0
 
 # NumPy for vector operations
