@@ -6,7 +6,7 @@ Reads episodic snapshots + semantic memories, calls LLM to extract patterns,
 and commits learned workflows (procedures) and failure patterns (negative constraints).
 
 Architecture:
-  Episodic Reader -> Analysis Engine (LLM via Bifrost) -> Commit Writer
+  Episodic Reader -> Analysis Engine (LLM via OmniRoute) -> Commit Writer
        |                    |                              |
        v                    v                              v
   context_snapshots    LLM extracts                   procedures /
@@ -40,10 +40,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nah-remember-dreamer")
 
-NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:4000")
+NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:20128")
 NAH_MODEL_GATEWAY_KEY = os.getenv("NAH_MODEL_GATEWAY_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://human:@localhost/notahuman")
-# Name the routing ALIAS, not a raw model. Bifrost's policy resolves
+# Name the routing ALIAS, not a raw model. OmniRoute's policy resolves
 # "nah-remember-dreamer" to free primary -> free -> free -> deepseek-v4-flash LAST.
 # Was "deepseek-v4-flash" (raw PAID), which bypassed the policy and billed on every run.
 LLM_MODEL = os.getenv("DREAMER_LLM_MODEL", "nah-remember-dreamer")

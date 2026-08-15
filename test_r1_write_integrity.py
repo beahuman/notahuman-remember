@@ -1,12 +1,12 @@
 """R1 write-integrity regression test (M6 nah-remember FLAWLESS remediation, #564).
 
 Proves the core invariant: memory_add NEVER persists a NULL-embedding row as success.
-When generate_embedding returns None (Bifrost down / 429 / 401 / key-leak), memory_add must
+When generate_embedding returns None (OmniRoute down / 429 / 401 / key-leak), memory_add must
 fail LOUD (success:false) and must NOT touch the pool / INSERT. This is the fix for the
 verified 30% silent data-loss (LESSON-10 class).
 
 Run: graphrag-venv/bin/python -m pytest test_r1_write_integrity.py -q
-(no DB / no Bifrost required — pool.acquire is asserted NOT called).
+(no DB / no OmniRoute required — pool.acquire is asserted NOT called).
 """
 
 import asyncio

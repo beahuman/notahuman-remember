@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backfill NULL embeddings in nah_remember.semantic_memories (Servo item 1, 2026-06-06).
 
-Embeds every row whose `embedding` IS NULL via Bifrost (mistral-embed, 1024-dim) using the
+Embeds every row whose `embedding` IS NULL via OmniRoute (mistral-embed, 1024-dim) using the
 dedicated memory VK — the same path the live server uses — and UPDATEs the row. Idempotent:
 re-running only touches rows that are still NULL.
 
@@ -23,7 +23,7 @@ DB_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://human:@localhost/notahuman?search_path=nah_remember,public",
 )
-GATEWAY = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:4000")
+GATEWAY = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:20128")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "mistral-embed")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 
@@ -117,7 +117,7 @@ async def main(dry_run: bool):
                 except Exception as exc:  # noqa: BLE001
                     fail += 1
                     print(f"  FAIL id={row['id']}: {str(exc)[:140]}")
-                await asyncio.sleep(0.05)  # gentle rate-limit to Bifrost
+                await asyncio.sleep(0.05)  # gentle rate-limit to OmniRoute
 
         async with pool.acquire() as conn:
             remaining = await conn.fetchval(

@@ -1,7 +1,7 @@
 """R5 pool-bound tests (#564) — DB waits are bounded so a saturated pool fails fast instead of
 hanging forever (the indefinite-hang -> deadlock pattern under 6-agent concurrency).
 
-Run: graphrag-venv/bin/python -m pytest test_r5_pool_bound.py -q  (no DB / no Bifrost).
+Run: graphrag-venv/bin/python -m pytest test_r5_pool_bound.py -q  (no DB / no OmniRoute).
 """
 
 import asyncio
