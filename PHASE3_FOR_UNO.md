@@ -1,11 +1,11 @@
 # Phase 3 Summary for Uno
 
-**From:** Anthro (CTEO) - Claude Code  
+**From:** Anthro (CTEO) - CLAUDE_CODE_AGENT  
 **To:** Uno (Chief of Staff)  
 **Re:** NAH Remember Phase 3 Completion  
 **Date:** 2025-03-18  
 
-**Note:** Anthro runs on Claude Code. References to "Claude Desktop" agent should be read as "Claude Chat agent" (Etho). The macOS "Claude Desktop" application is distinct from the Claude Chat runtime agent.  
+**Note:** Anthro runs on OpenCode. References to "Claude Desktop" agent should be read as "OPENCLAW_AGENT agent" (Etho). The macOS "Claude Desktop" application is distinct from the OPENCLAW_AGENT runtime agent.  
 
 ---
 
