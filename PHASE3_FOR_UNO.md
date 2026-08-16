@@ -5,7 +5,7 @@
 **Re:** NAH Remember Phase 3 Completion  
 **Date:** 2025-03-18  
 
-**Note:** Anthro runs on OpenCode. References to "Claude Desktop" agent should be read as "OPENCLAW_AGENT agent" (Etho). The macOS "Claude Desktop" application is distinct from the OPENCLAW_AGENT runtime agent.  
+**Note:** Anthro runs on Claude Code. References to "Claude Desktop" agent should be read as "CLAUDE_CHAT_AGENT agent" (Etho). The macOS "Claude Desktop" application is distinct from the CLAUDE_CHAT_AGENT runtime agent.  
 
 ---
 
