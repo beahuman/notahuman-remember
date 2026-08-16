@@ -37,7 +37,7 @@ try:
     print(f"  asyncpg: OK (version {asyncpg.__version__})")
 except ImportError as e:
     print(f"  asyncpg: FAILED - {e}")
-    # Note: This runs in Claude Chat (agent), not the macOS application
+    # Note: This runs in OPENCLAW_AGENT (agent), not the macOS application
     sys.exit(1)
 
 try:

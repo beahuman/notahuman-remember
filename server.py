@@ -1815,7 +1815,7 @@ class MCPHandler:
                         },
                         "application": {
                             "type": "string",
-                            "description": "Application name (claude-desktop, claude-code, etc.)",
+                            "description": "Application name (claude-desktop, opencode-framework, etc.)",
                         },
                         "user_id": {
                             "type": "string",
