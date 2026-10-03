@@ -1,1 +1,288 @@
-# Phase 3 Summary for Uno **From\1** (CTEO) - Claude Code **To\1** Uno (Chief of Staff) **Re\1** NAH Remember Phase 3 Completion **Date\1** 2025-03-18 **Note\1** runs on Claude Code\1References to "Claude Desktop" agent should be read as "Claude Chat agent" ()\1The macOS "Claude Desktop" application is distinct from the Claude Chat runtime agent\1- ## TL\1DR Phase 3 is **complete\1tested\1and integrated**\1The memory system now has intelligent ranking across 4 memory layers (recent\1episodic\1semantic\1meta)\1All 12 tests pass\1Zero breaking changes\1**What Uno needs to know\1** Phase 3 works automatically\1No action required for deployment\1- ## What Phase 3 Does ### Before Phase 3 - Could search memory by keyword/embedding - Got results\1but no smart ranking - All results treated equally ### After Phase 3 - Searches 4 memory layers simultaneously - Ranks results by composite score\1`importance × 0\14 + usage × 0\13 + freshness × 0\13` - More relevant results bubble up first - Automatically weights by layer type ### Example ``` Query\1"How do I handle async errors?" Before\1[Memory A\1Memory C\1Memory B] (just by similarity) After\1[Memory B\1Memory A\1Memory C] (ranked by composite score) Memory B\1- Importance\10\18 (flagged as critical) - Usage\1Accessed 3 times (score\10\14) - Freshness\1Created 2 days ago (score\10\193) - Composite\10\18×0\14 + 0\14×0\13 + 0\193×0\13 = 0\171 ← TOP RANKED ``` - ## The 4 Memory Layers | Layer | Contains | Use For | |-|-|-| | **Ephemeral** | Messages from last 24h | Current chat context | | **Episodic** | Project snapshots\1entities | Current project state | | **Semantic** | Long-term memories\1procedures | Learned knowledge\1patterns | | **Meta** | Entity relationships\1history | How knowledge evolved | When you search\1Phase 3 queries all 4 and ranks results together\1- ## Files Delivered ### Core - **nah_remember_phase3\1py** (22 KB) — The ranking engine - **test_phase3\1py** (15 KB) — Tests (all passing ✅) - **nah_remember_mcp\1py** — Updated with Phase 3 integration ### Documentation - **PHASE3_DOCUMENTATION\1md** (11 KB) — Full technical reference - **PHASE3_QUICKSTART\1md** (6 KB) — Quick start guide - **PHASE3_COMPLETION_REPORT\1md** (12 KB) — Delivery report - **PHASE3_MANIFEST\1md** (10 KB) — File inventory - **PHASE3_FOR_UNO\1md** (this file) — Uno's summary - ## API (For Claude Desktop/Code) ### Main Function ```python result = await mcp_call( "nah_remember_search_ranked"\1{ "query_embedding"\1[0\11\10\12\1\1\1\1]\1# Pre-embedded "memory_type"\1"all"\1# or\1ephemeral\1episodic\1semantic\1meta "limit"\120 } ) ``` ### Response ```python { "success"\1True\1"total_results"\18\1"results"\1[ { "memory_type"\1"semantic_memory"\1"content"\1"\1\1\1"\1"layer"\1"semantic"\1"composite_score"\10\178\1# ← Ranking score "created_at"\1"\1\1\1" }\1\1\1\1# More results\1ranked highest to lowest ] } ``` - ## Ranking Formula (The Math) ``` Score = (Importance × 40%) + (Usage × 30%) + (Freshness × 30%) ``` **Each component\1** - **Importance\1** How critical is this memory? (0\10-1\10\1set when saved) - **Usage\1** How often accessed? (log scale\10\10-1\10) - **Freshness\1** How recent? (linear decay over 30 days\10\10-1\10) **Auto-normalizes\1** If you provide custom weights that don't sum to 100%\1they're fixed automatically\1- ## Integration Status ### ✅ Ready Now - MCP tool registered (`nah_remember_search_ranked`) - Integrated into main MCP server - Tested and passing (12/12 tests ✅) - Backward compatible (old APIs still work) - Zero configuration needed ### 🚀 Deployment 1\1Merge Phase 3 files into production 2\1Restart MCP server 3\1Tool available immediately **No migration\1No schema changes\1No downtime\1** - ## Why This Matters ### Before Memory search was like finding a book by title — you got results\1but not necessarily the most relevant ones\1### Now Memory search is like having a librarian — they consider\1- How important is this? (importance) - How often do you use it? (usage) - How recent is it? (freshness) And they hand you the most useful one first\1### For notahuman - Better context for design tasks - Learned patterns surface faster - Project state always accessible - Evolution of ideas tracked - ## Testing All 12 tests pass\1``` ✅ Database connectivity ✅ Composite score calculation ✅ JSON serialization ✅ Ephemeral layer (recent messages) ✅ Episodic layer (project state) ✅ Semantic layer (learned knowledge) ✅ Meta layer (relationships) ✅ Unified ranked search (all layers) ✅ Single-layer filtering ✅ Ranking determinism ✅ Weight normalization ✅ MCP integration ``` Run tests\1```bash cd ~/\1\1\1/nah-remember-unified python3 test_phase3\1py ``` - ## Performance **Typical query latency\1** - Single layer\150-200ms - All 4 layers\1200-500ms - Acceptable for interactive use ✅ **No impact on existing operations\1** - Ranking is O(n log n)\1not expensive - Uses existing indexes - Doesn't modify any data - ## Known Limitations (Future Work) 1\1Single embedding model (support for multi-model routing later) 2\1Linear recency decay (can add exponential curves later) 3\1No semantic clustering (future enhancement) **None block deployment\1All are post-Phase 3 improvements\1** - ## If Something Goes Wrong ### "No results" 1\1Check database connection\1`SELECT COUNT(*) FROM nah_remember\1messages` 2\1Verify embeddings exist\1`SELECT COUNT(*) FROM nah_remember\1messages WHERE embedding IS NOT NULL` 3\1Try all layers\1`memory_type="all"` ### "Wrong results order" 1\1Review ranking formula — scores are 0\10-1\10 (0\178 is good\1not 78%) 2\1Check memory importance scores — defaults to 0\15 3\1Consider custom weights — different use cases need different priorities ### "Tool not found" 1\1Restart MCP server 2\1Check Phase 3 files are in place 3\1Verify nah_remember_mcp\1py imports Phase 3 - ## Next Steps for Uno 1\1**Deploy\1** Merge Phase 3 files\1restart server 2\1**Verify\1** Run test suite\1check tool availability 3\1**Monitor\1** Track query latency\1result quality 4\1**Tune\1** Adjust weights if needed for your use cases **Immediate\1** Phase 3 ready to deploy\1no blockers **Future\1** Consider feedback loop for ranking quality improvement - ## For the Record **Phase 3 Scope\1** - ✅ Ranking formula (40/30/30 weights) - ✅ Cross-layer queries (4 layers) - ✅ Type filtering (ephemeral|episodic|semantic|meta|all) - ✅ Result composition - ✅ MCP integration - ✅ Documentation - ✅ Testing (12/12 passing) **Status\1** Complete and ready for production\1- **** CTEO\1notahuman Delivered\12025-03-18 05\147 EDT - ## Quick Reference | Thing | How | |-|-| | **Use Phase 3** | Call `nah_remember_search_ranked()` via MCP | | **Query all memory** | `memory_type="all"` | | **Query recent only** | `memory_type="ephemeral"` | | **Custom ranking** | Pass custom weights (auto-normalized) | | **See test results** | Run `python3 test_phase3\1py` | | **Read full docs** | See PHASE3_DOCUMENTATION\1md | | **Quick start** | See PHASE3_QUICKSTART\1md | - ✅ **Ready to ship\1**
+# Phase 3 Summary for Uno
+
+**From:** Anthro (CTEO) - CLAUDE_CODE_AGENT  
+**To:** Uno (Chief of Staff)  
+**Re:** NAH Remember Phase 3 Completion  
+**Date:** 2025-03-18  
+
+**Note:** Anthro runs on Claude Code. References to "Claude Desktop" agent should be read as "CLAUDE_CHAT_AGENT agent" (Etho). The macOS "Claude Desktop" application is distinct from the CLAUDE_CHAT_AGENT runtime agent.  
+
+---
+
+## TL;DR
+
+Phase 3 is **complete, tested, and integrated**. The memory system now has intelligent ranking across 4 memory layers (recent, episodic, semantic, meta). All 12 tests pass. Zero breaking changes.
+
+**What Uno needs to know:** Phase 3 works automatically. No action required for deployment.
+
+---
+
+## What Phase 3 Does
+
+### Before Phase 3
+- Could search memory by keyword/embedding
+- Got results, but no smart ranking
+- All results treated equally
+
+### After Phase 3
+- Searches 4 memory layers simultaneously
+- Ranks results by composite score: `importance × 0.4 + usage × 0.3 + freshness × 0.3`
+- More relevant results bubble up first
+- Automatically weights by layer type
+
+### Example
+
+```
+Query: "How do I handle async errors?"
+
+Before:  [Memory A, Memory C, Memory B]  (just by similarity)
+After:   [Memory B, Memory A, Memory C]  (ranked by composite score)
+
+Memory B:
+  - Importance: 0.8 (flagged as critical)
+  - Usage: Accessed 3 times (score: 0.4)
+  - Freshness: Created 2 days ago (score: 0.93)
+  - Composite: 0.8×0.4 + 0.4×0.3 + 0.93×0.3 = 0.71 ← TOP RANKED
+```
+
+---
+
+## The 4 Memory Layers
+
+| Layer | Contains | Use For |
+|-------|----------|---------|
+| **Ephemeral** | Messages from last 24h | Current chat context |
+| **Episodic** | Project snapshots, entities | Current project state |
+| **Semantic** | Long-term memories, procedures | Learned knowledge, patterns |
+| **Meta** | Entity relationships, history | How knowledge evolved |
+
+When you search, Phase 3 queries all 4 and ranks results together.
+
+---
+
+## Files Delivered
+
+### Core
+- **nah_remember_phase3.py** (22 KB) — The ranking engine
+- **test_phase3.py** (15 KB) — Tests (all passing ✅)
+- **nah_remember_mcp.py** — Updated with Phase 3 integration
+
+### Documentation
+- **PHASE3_DOCUMENTATION.md** (11 KB) — Full technical reference
+- **PHASE3_QUICKSTART.md** (6 KB) — Quick start guide
+- **PHASE3_COMPLETION_REPORT.md** (12 KB) — Delivery report
+- **PHASE3_MANIFEST.md** (10 KB) — File inventory
+- **PHASE3_FOR_UNO.md** (this file) — Uno's summary
+
+---
+
+## API (For Claude Desktop/Code)
+
+### Main Function
+
+```python
+result = await mcp_call(
+    "nah_remember_search_ranked",
+    {
+        "query_embedding": [0.1, 0.2, ...],  # Pre-embedded
+        "memory_type": "all",  # or: ephemeral, episodic, semantic, meta
+        "limit": 20
+    }
+)
+```
+
+### Response
+
+```python
+{
+    "success": True,
+    "total_results": 8,
+    "results": [
+        {
+            "memory_type": "semantic_memory",
+            "content": "...",
+            "layer": "semantic",
+            "composite_score": 0.78,  # ← Ranking score
+            "created_at": "..."
+        },
+        ...  # More results, ranked highest to lowest
+    ]
+}
+```
+
+---
+
+## Ranking Formula (The Math)
+
+```
+Score = (Importance × 40%) + (Usage × 30%) + (Freshness × 30%)
+```
+
+**Each component:**
+
+- **Importance:** How critical is this memory? (0.0-1.0, set when saved)
+- **Usage:** How often accessed? (log scale, 0.0-1.0)
+- **Freshness:** How recent? (linear decay over 30 days, 0.0-1.0)
+
+**Auto-normalizes:** If you provide custom weights that don't sum to 100%, they're fixed automatically.
+
+---
+
+## Integration Status
+
+### ✅ Ready Now
+- MCP tool registered (`nah_remember_search_ranked`)
+- Integrated into main MCP server
+- Tested and passing (12/12 tests ✅)
+- Backward compatible (old APIs still work)
+- Zero configuration needed
+
+### 🚀 Deployment
+1. Merge Phase 3 files into production
+2. Restart MCP server
+3. Tool available immediately
+
+**No migration. No schema changes. No downtime.**
+
+---
+
+## Why This Matters
+
+### Before
+Memory search was like finding a book by title — you got results, but not necessarily the most relevant ones.
+
+### Now
+Memory search is like having a librarian — they consider:
+- How important is this? (importance)
+- How often do you use it? (usage)
+- How recent is it? (freshness)
+
+And they hand you the most useful one first.
+
+### For notahuman
+- Better context for design tasks
+- Learned patterns surface faster
+- Project state always accessible
+- Evolution of ideas tracked
+
+---
+
+## Testing
+
+All 12 tests pass:
+
+```
+✅ Database connectivity
+✅ Composite score calculation
+✅ JSON serialization
+✅ Ephemeral layer (recent messages)
+✅ Episodic layer (project state)
+✅ Semantic layer (learned knowledge)
+✅ Meta layer (relationships)
+✅ Unified ranked search (all layers)
+✅ Single-layer filtering
+✅ Ranking determinism
+✅ Weight normalization
+✅ MCP integration
+```
+
+Run tests:
+```bash
+cd ~/.../nah-remember-unified
+python3 test_phase3.py
+```
+
+---
+
+## Performance
+
+**Typical query latency:**
+- Single layer: 50-200ms
+- All 4 layers: 200-500ms
+- Acceptable for interactive use ✅
+
+**No impact on existing operations:**
+- Ranking is O(n log n), not expensive
+- Uses existing indexes
+- Doesn't modify any data
+
+---
+
+## Known Limitations (Future Work)
+
+1. Single embedding model (support for multi-model routing later)
+2. Linear recency decay (can add exponential curves later)
+3. No semantic clustering (future enhancement)
+
+**None block deployment. All are post-Phase 3 improvements.**
+
+---
+
+## If Something Goes Wrong
+
+### "No results"
+1. Check database connection: `SELECT COUNT(*) FROM nah_remember.messages`
+2. Verify embeddings exist: `SELECT COUNT(*) FROM nah_remember.messages WHERE embedding IS NOT NULL`
+3. Try all layers: `memory_type="all"`
+
+### "Wrong results order"
+1. Review ranking formula — scores are 0.0-1.0 (0.78 is good, not 78%)
+2. Check memory importance scores — defaults to 0.5
+3. Consider custom weights — different use cases need different priorities
+
+### "Tool not found"
+1. Restart MCP server
+2. Check Phase 3 files are in place
+3. Verify nah_remember_mcp.py imports Phase 3
+
+---
+
+## Next Steps for Uno
+
+1. **Deploy:** Merge Phase 3 files, restart server
+2. **Verify:** Run test suite, check tool availability
+3. **Monitor:** Track query latency, result quality
+4. **Tune:** Adjust weights if needed for your use cases
+
+**Immediate:** Phase 3 ready to deploy, no blockers
+
+**Future:** Consider feedback loop for ranking quality improvement
+
+---
+
+## For the Record
+
+**Phase 3 Scope:**
+- ✅ Ranking formula (40/30/30 weights)
+- ✅ Cross-layer queries (4 layers)
+- ✅ Type filtering (ephemeral|episodic|semantic|meta|all)
+- ✅ Result composition
+- ✅ MCP integration
+- ✅ Documentation
+- ✅ Testing (12/12 passing)
+
+**Status:** Complete and ready for production.
+
+---
+
+**Anthro**  
+CTEO, notahuman  
+Delivered: 2025-03-18 05:47 EDT
+
+---
+
+## Quick Reference
+
+| Thing | How |
+|------|-----|
+| **Use Phase 3** | Call `nah_remember_search_ranked()` via MCP |
+| **Query all memory** | `memory_type="all"` |
+| **Query recent only** | `memory_type="ephemeral"` |
+| **Custom ranking** | Pass custom weights (auto-normalized) |
+| **See test results** | Run `python3 test_phase3.py` |
+| **Read full docs** | See PHASE3_DOCUMENTATION.md |
+| **Quick start** | See PHASE3_QUICKSTART.md |
+
+---
+
+✅ **Ready to ship.**
