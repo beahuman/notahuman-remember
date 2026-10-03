@@ -26,11 +26,11 @@ try:
 except Exception as e:
     print(f"Connection Error: {e}")
 
-# Test OmniRoute gateway
-print("\n=== Testing OmniRoute Gateway ===")
+# Test Bifrost gateway
+print("\n=== Testing Bifrost Gateway ===")
 try:
     resp = httpx.post(
-        "http://localhost:20128/embeddings",
+        "http://localhost:4000/embeddings",
         headers={
             "Authorization": f"Bearer {os.getenv('NAH_MODEL_GATEWAY_KEY', '')}",
             "Content-Type": "application/json",
