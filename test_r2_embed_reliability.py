@@ -4,7 +4,7 @@
 (2) the embedding auth key is the dedicated VK (EMBEDDING_API_KEY), not the ambiguous
     NAH_MODEL_GATEWAY_KEY that can be stale in a gateway-spawned child.
 
-Run: graphrag-venv/bin/python -m pytest test_r2_embed_reliability.py -q  (no DB / no OmniRoute).
+Run: graphrag-venv/bin/python -m pytest test_r2_embed_reliability.py -q  (no DB / no Bifrost).
 """
 
 import asyncio

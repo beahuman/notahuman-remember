@@ -354,7 +354,7 @@ All Phase 3 config comes from existing nah-remember setup:
 
 ```bash
 DATABASE_URL=postgresql://...
-LITELLM_BASE_URL=http://localhost:20128
+LITELLM_BASE_URL=http://localhost:4000
 EMBEDDING_DIM=1536
 ```
 

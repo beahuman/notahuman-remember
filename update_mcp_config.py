@@ -28,7 +28,7 @@ def main():
         "cwd": "/Users/human/notahuman",
         "env": {
             "DATABASE_URL": "postgresql://human:@localhost/notahuman",
-            "NAH_MODEL_GATEWAY_URL": "http://localhost:20128",
+            "NAH_MODEL_GATEWAY_URL": "http://localhost:4000",
             "EMBEDDING_MODEL": "embedding-primary",
             "EMBEDDING_MODEL_FALLBACK": "embedding-large",
             "EMBEDDING_DIM": "1024",

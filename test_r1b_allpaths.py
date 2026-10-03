@@ -5,7 +5,7 @@ and memory_update, WITH the nuance that message_save/entity_add embeddings are O
 only a failure when an embedding was REQUESTED (generate_embedding=True). memory_update always embeds,
 and a failed embed there would WIPE the existing vector — the worst case — so it must refuse.
 
-Run: graphrag-venv/bin/python -m pytest test_r1b_allpaths.py -q  (no DB / no OmniRoute needed).
+Run: graphrag-venv/bin/python -m pytest test_r1b_allpaths.py -q  (no DB / no Bifrost needed).
 """
 
 import asyncio
