@@ -42,8 +42,20 @@ logger = logging.getLogger(__name__)
 # Embedding configuration
 # OmniRoute is the embedding path so the server stays decoupled from local model runners.
 NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:20128")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "embedding-primary")
-EMBEDDING_MODEL_FALLBACK = os.getenv("EMBEDDING_MODEL_FALLBACK", "embedding-large")
+# 2026-10-24 (ASTRO-03): the old defaults were "embedding-primary" / "embedding-large",
+# neither of which exists in OmniRoute — every write that fell through to the fallback
+# returned 400 "Invalid embedding model: use provider/model" and stored a NULL embedding
+# (365 of 1,414 rows). Both slots now point at real, 1024-dim, bge-m3 endpoints:
+# local/bge-m3 (embed-server on :52343, cosine 1.0 with the Cloudflare model) and the
+# Cloudflare AI fallback. Keep dimensions at 1024 or writes violate the vector(1024) column.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "local/bge-m3")
+EMBEDDING_MODEL_FALLBACK = os.getenv("EMBEDDING_MODEL_FALLBACK", "cloudflare-ai/@cf/baai/bge-m3")
+# 2026-10-24: OmniRoute v1/embeddings answers 400 "Unknown embedding provider: local.
+# No matching hardcoded or local provider found" — the gateway has no `local` provider
+# registered, so `local/bge-m3` only resolves on the embed-server itself (:52343, 1024-dim).
+# Point straight at it until the provider is registered in OmniRoute (card t_c463ecd7
+# follow-up); then flip this default back to the gateway and re-verify.
+EMBEDDING_URL = os.getenv("EMBEDDING_URL", "http://127.0.0.1:52343/v1/embeddings")
 NAH_MODEL_GATEWAY_KEY = os.getenv("NAH_MODEL_GATEWAY_KEY", "")
 # R2 (#564): pin the embedding auth key to the DEDICATED nah-remember virtual key. A
 # gateway-spawned child can inherit a stale/empty NAH_MODEL_GATEWAY_KEY (verified 401 in one path);
@@ -160,9 +172,13 @@ class NahMemoryMCPServer:
             delay = 1.0
             for _attempt in range(5):
                 response = await self.http_client.post(
-                    f"{NAH_MODEL_GATEWAY_URL}/v1/embeddings",
+                    EMBEDDING_URL,
                     headers={
-                        "Authorization": f"Bearer {EMBEDDING_API_KEY}",
+                        **(
+                            {"Authorization": f"Bearer {EMBEDDING_API_KEY}"}
+                            if EMBEDDING_API_KEY
+                            else {}
+                        ),
                         "Content-Type": "application/json",
                     },
                     json={"model": model, "input": text},
