@@ -4,7 +4,10 @@ NAH Memory Unified MCP Server
 Consolidates mem0, rag-memory, and episodic-memory into a single PostgreSQL-backed system.
 
 Storage: PostgreSQL nah_remember schema with pgvector embeddings
-Embedding: OmniRoute gateway — embedding-primary (mistral-embed, 1024-dim) + embedding-large fallback
+Embedding: bge-m3 1024-dim — loopback embed-server (EMBEDDING_URL, default
+http://127.0.0.1:52343/v1/embeddings, model local/bge-m3), fallback
+cloudflare-ai/@cf/baai/bge-m3. Old aliases embedding-primary/embedding-large were
+rejected by OmniRoute with 400 and silently leaked NULL embeddings (ASTRO-03).
 
 Tables:
 - sessions: Session tracking across applications
