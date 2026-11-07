@@ -1,24 +1,72 @@
-# nah-remember — unified MCP server for long-term memory (PostgreSQL + pgvector)
-# Renamed 2026-05-10 from nah-remember-unified per CEO directive (NAH-CONSOLIDATION-2026-05-10)
-# Migrated from requirements.txt 2026-05-10 (NAH-374b)
-# Workspace member of infrastructure/
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
-name = "nah-remember"
+name = "notahuman-remember"
 version = "0.1.0"
-description = "Unified MCP server for nah-remember (PostgreSQL + pgvector long-term memory)"
+description = "Long-term memory MCP server for AI agents backed by PostgreSQL + pgvector with hybrid ranking"
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "notahuman", email = "engineering@notahuman.com" },
+]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "memory",
+    "agent-memory",
+    "postgresql",
+    "pgvector",
+    "hybrid-search",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Database",
+]
 dependencies = [
+    "mcp>=1.2.0",
     "asyncpg>=0.29.0",
     "httpx>=0.25.0",
     "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
-dev = [
+test = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
 ]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
 
-[tool.uv]
-package = false
+[project.urls]
+Homepage = "https://github.com/beahuman/notahuman-remember"
+Repository = "https://github.com/beahuman/notahuman-remember"
+Issues = "https://github.com/beahuman/notahuman-remember/issues"
+Changelog = "https://github.com/beahuman/notahuman-remember/blob/main/CHANGELOG.md"
+
+[project.scripts]
+nah-remember = "nah_remember.server:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nah_remember"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
