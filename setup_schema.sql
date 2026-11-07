@@ -1,5 +1,5 @@
--- NAH Memory Unified PostgreSQL Schema
--- Run: psql -h localhost -U human -d notahuman -f setup_schema.sql
+-- NAH Remember PostgreSQL Schema
+-- Run: psql -d "$DATABASE_URL" -f setup_schema.sql
 
 -- Create schema
 CREATE SCHEMA IF NOT EXISTS nah_remember;

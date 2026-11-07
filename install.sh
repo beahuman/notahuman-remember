@@ -1,11 +1,11 @@
 #!/bin/bash
-# Install dependencies for nah-memory-unified MCP server
+# Install dependencies for nah-remember MCP server
 # Run this script before starting the server
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/venv"
 
-echo "=== NAH Memory Unified MCP Installation ==="
+echo "=== NAH Remember MCP Installation ==="
 
 # Create venv if needed
 if [ ! -d "$VENV_DIR" ]; then

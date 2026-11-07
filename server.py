@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-NAH Memory Unified MCP Server
-Consolidates mem0, rag-memory, and episodic-memory into a single PostgreSQL-backed system.
+NAH Remember MCP Server
+Consolidates session memory, knowledge graph, and episodic memory into a single PostgreSQL-backed system.
 
 Storage: PostgreSQL nah_remember schema with pgvector embeddings
-Embedding: bge-m3 1024-dim — loopback embed-server (EMBEDDING_URL, default
-http://127.0.0.1:52343/v1/embeddings, model local/bge-m3), fallback
-cloudflare-ai/@cf/baai/bge-m3. Old aliases embedding-primary/embedding-large were
-rejected by OmniRoute with 400 and silently leaked NULL embeddings (ASTRO-03).
+Embedding: 1024-dim pgvector embeddings via OpenAI-compatible embedding API
 
 Tables:
 - sessions: Session tracking across applications
@@ -43,59 +40,51 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Embedding configuration
-# OmniRoute is the embedding path so the server stays decoupled from local model runners.
-NAH_MODEL_GATEWAY_URL = os.getenv("NAH_MODEL_GATEWAY_URL", "http://localhost:20128")
-# 2026-10-24 (ASTRO-03): the old defaults were "embedding-primary" / "embedding-large",
-# neither of which exists in OmniRoute — every write that fell through to the fallback
-# returned 400 "Invalid embedding model: use provider/model" and stored a NULL embedding
-# (365 of 1,414 rows). Both slots now point at real, 1024-dim, bge-m3 endpoints:
-# local/bge-m3 (embed-server on :52343, cosine 1.0 with the Cloudflare model) and the
-# Cloudflare AI fallback. Keep dimensions at 1024 or writes violate the vector(1024) column.
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "local/bge-m3")
-EMBEDDING_MODEL_FALLBACK = os.getenv("EMBEDDING_MODEL_FALLBACK", "cloudflare-ai/@cf/baai/bge-m3")
-# 2026-10-24: OmniRoute v1/embeddings answers 400 "Unknown embedding provider: local.
-# No matching hardcoded or local provider found" — the gateway has no `local` provider
-# registered, so `local/bge-m3` only resolves on the embed-server itself (:52343, 1024-dim).
-# Point straight at it until the provider is registered in OmniRoute (card t_c463ecd7
-# follow-up); then flip this default back to the gateway and re-verify.
-EMBEDDING_URL = os.getenv("EMBEDDING_URL", "http://127.0.0.1:52343/v1/embeddings")
-NAH_MODEL_GATEWAY_KEY = os.getenv("NAH_MODEL_GATEWAY_KEY", "")
-# R2 (#564): pin the embedding auth key to the DEDICATED nah-remember virtual key. A
-# gateway-spawned child can inherit a stale/empty NAH_MODEL_GATEWAY_KEY (verified 401 in one path);
-# using it for embeddings turns every memory write into a silent failure. Prefer VK_NAH_REMEMBER_FREE
-# (resolved from launch env) so that leak path is closed. Value comes from env/vault — no secret in code.
-EMBEDDING_API_KEY = os.getenv("VK_NAH_REMEMBER_FREE", "") or NAH_MODEL_GATEWAY_KEY
+# Supports any OpenAI-compatible embedding endpoint (e.g., local Ollama, vLLM, OpenAI, Cloudflare AI, etc.)
+EMBEDDING_URL = os.getenv(
+    "NAH_REMEMBER_EMBEDDING_URL",
+    os.getenv("EMBEDDING_URL", "http://127.0.0.1:11434/v1/embeddings"),
+)
+EMBEDDING_MODEL = os.getenv(
+    "NAH_REMEMBER_EMBEDDING_MODEL",
+    os.getenv("EMBEDDING_MODEL", "bge-m3"),
+)
+EMBEDDING_MODEL_FALLBACK = os.getenv(
+    "NAH_REMEMBER_EMBEDDING_FALLBACK_MODEL",
+    os.getenv("EMBEDDING_MODEL_FALLBACK", ""),
+)
+EMBEDDING_API_KEY = os.getenv(
+    "NAH_REMEMBER_EMBEDDING_API_KEY",
+    os.getenv("EMBEDDING_API_KEY", os.getenv("OPENAI_API_KEY", "")),
+)
 EMBEDDING_DIM = int(
-    os.getenv("EMBEDDING_DIM", "1024")
-)  # DB column is vector(1024); Mistral natively returns 1024-dim
-# R5 (#564): bound DB waits so a saturated pool fails FAST (typed timeout) instead of hanging
-# forever under concurrent agent load — the indefinite-hang -> agents-waiting-on-each-other
-# deadlock pattern. command_timeout bounds any single query; the acquire timeout bounds the wait
-# for a free connection (the 21st concurrent acquire raises instead of blocking).
+    os.getenv("NAH_REMEMBER_EMBEDDING_DIM", os.getenv("EMBEDDING_DIM", "1024"))
+)
+# Connection pool timeouts: bound DB waits so a saturated pool fails fast
 POOL_ACQUIRE_TIMEOUT = float(os.getenv("NAH_REMEMBER_POOL_ACQUIRE_TIMEOUT", "10"))
 COMMAND_TIMEOUT = float(os.getenv("NAH_REMEMBER_COMMAND_TIMEOUT", "30"))
 
 
-class NahMemoryMCPServer:
+class NahRememberMCPServer:
     """Unified Memory MCP Server with JSON-RPC Implementation"""
 
-    # Default DSN when DATABASE_URL is empty, unset, or an unresolved template
-    DEFAULT_DB_URL = "postgresql://human:@localhost/notahuman"
+    # Generic fallback DSN when DATABASE_URL is empty, unset, or unresolved
+    DEFAULT_DB_URL = "postgresql://localhost:5432/postgres"
 
     @staticmethod
     def _resolve_db_url() -> str:
-        """Get database URL, falling back to default if env var is empty or unresolved."""
-        url = os.getenv("DATABASE_URL", "")
+        """Get database URL from environment, falling back to generic default."""
+        url = os.getenv("NAH_REMEMBER_DATABASE_URL") or os.getenv("DATABASE_URL", "")
         # Handle empty, unset, or unresolved ${...} template strings
         if not url or url.startswith("${"):
-            return NahMemoryMCPServer.DEFAULT_DB_URL
+            return NahRememberMCPServer.DEFAULT_DB_URL
         return url
 
     def __init__(self):
         self.db_url = self._resolve_db_url()
         self.pool = None
         self.http_client = None
-        logger.info(f"NAH Memory Unified MCP Server initializing (db: {self.db_url})...")
+        logger.info("NAH Remember MCP Server initializing...")
 
     async def setup(self):
         """Initialize connection pool and HTTP client"""
@@ -104,8 +93,8 @@ class NahMemoryMCPServer:
                 self.db_url, min_size=2, max_size=20, command_timeout=COMMAND_TIMEOUT
             )
             self.http_client = httpx.AsyncClient(timeout=30.0)
-            logger.info(f"PostgreSQL pool created: {self.db_url}")
-            logger.info(f"OmniRoute endpoint: {NAH_MODEL_GATEWAY_URL}")
+            logger.info("PostgreSQL pool created")
+            logger.info(f"Embedding endpoint: {EMBEDDING_URL}")
             logger.info(
                 f"Embedding model: {EMBEDDING_MODEL} (fallback: {EMBEDDING_MODEL_FALLBACK})"
             )
@@ -167,11 +156,10 @@ class NahMemoryMCPServer:
     async def generate_embedding(
         self, text: str, use_fallback: bool = False
     ) -> Optional[List[float]]:
-        """Generate an embedding through OmniRoute."""
+        """Generate an embedding through the configured embedding API."""
 
-        async def _generate_via_omniroute(model: str) -> Optional[List[float]]:
-            # R2 (#564): bounded retry with backoff on 429 (rate limit). Previously a 429 fell straight
-            # through to None → a loud R1 failure → a dropped memory. Retrying keeps embeddings reliable.
+        async def _generate_via_api(model: str) -> Optional[List[float]]:
+            # Bounded retry with backoff on 429 (rate limit)
             delay = 1.0
             for _attempt in range(5):
                 response = await self.http_client.post(
@@ -195,31 +183,31 @@ class NahMemoryMCPServer:
                 if "data" in data and len(data["data"]) > 0:
                     embedding = data["data"][0].get("embedding", [])
                     logger.debug(
-                        f"Generated OmniRoute embedding with {len(embedding)} dimensions using {model}"
+                        f"Generated embedding with {len(embedding)} dimensions using {model}"
                     )
                     return embedding
-                logger.warning(f"Unexpected OmniRoute embedding response format: {data}")
+                logger.warning(f"Unexpected embedding response format: {data}")
                 return None
-            logger.error("OmniRoute embedding rate-limited (429) after retries")
+            logger.error("Embedding API rate-limited (429) after retries")
             return None
 
-        omniroute_model = EMBEDDING_MODEL_FALLBACK if use_fallback else EMBEDDING_MODEL
+        target_model = EMBEDDING_MODEL_FALLBACK if (use_fallback and EMBEDDING_MODEL_FALLBACK) else EMBEDDING_MODEL
 
         try:
-            embedding = await _generate_via_omniroute(omniroute_model)
+            embedding = await _generate_via_api(target_model)
             if embedding:
                 return embedding
         except httpx.HTTPStatusError as e:
-            if not use_fallback and e.response.status_code >= 500:
-                logger.warning(f"Primary OmniRoute embedding failed, trying fallback: {e}")
+            if not use_fallback and EMBEDDING_MODEL_FALLBACK and e.response.status_code >= 500:
+                logger.warning(f"Primary embedding failed, trying fallback: {e}")
                 return await self.generate_embedding(text, use_fallback=True)
-            logger.error(f"OmniRoute embedding generation failed: {e}")
+            logger.error(f"Embedding generation failed: {e}")
             return None
         except Exception as e:
-            if not use_fallback:
-                logger.warning(f"Primary OmniRoute embedding failed, trying fallback: {e}")
+            if not use_fallback and EMBEDDING_MODEL_FALLBACK:
+                logger.warning(f"Primary embedding failed, trying fallback: {e}")
                 return await self.generate_embedding(text, use_fallback=True)
-            logger.error(f"OmniRoute embedding generation failed: {e}")
+            logger.error(f"Embedding generation failed: {e}")
             return None
 
         return None
@@ -363,7 +351,7 @@ class NahMemoryMCPServer:
             if generate_embedding and content:
                 embedding = await self.generate_embedding(content)
                 if embedding is None:
-                    # R1b (write integrity, #564): embedding was REQUESTED but failed — refuse to
+                    # Write integrity: embedding was requested but failed — refuse to
                     # persist a silently-unsearchable message as success. (A NULL embedding is only
                     # legitimate when generate_embedding is False, i.e. not requested.)
                     logger.error(
@@ -556,7 +544,7 @@ class NahMemoryMCPServer:
                 embed_text = f"{name}: {description}" if description else name
                 embedding = await self.generate_embedding(embed_text)
                 if embedding is None:
-                    # R1b (write integrity, #564): embedding requested but failed — refuse to persist
+                    # Write integrity: embedding requested but failed — refuse to persist
                     # a silently-unsearchable entity as success.
                     logger.error(
                         "entity_add: requested embedding unavailable — refusing NULL-as-success insert"
@@ -855,10 +843,8 @@ class NahMemoryMCPServer:
         """Add a semantic memory (replaces mem0_add_memory)"""
         try:
             embedding = await self.generate_embedding(content)
-            # R1 (write integrity): NEVER persist a NULL-embedding row as success — a memory that is
-            # stored but unsearchable is silent, unrecoverable data loss (LESSON-10). Fail LOUD so the
-            # caller can retry; embed reliability (retry/backoff + key isolation) is hardened separately
-            # in generate_embedding (R2). Invariant: no post-cutover row has NULL embedding + content.
+            # Write integrity: NEVER persist a NULL-embedding row as success — a memory that is
+            # stored but unsearchable is silent data loss. Fail fast so the caller can retry.
             if embedding is None:
                 logger.error(
                     "memory_add: embedding unavailable "
@@ -1060,8 +1046,8 @@ class NahMemoryMCPServer:
                 # Generate new embedding
                 embedding = await self.generate_embedding(content)
                 if embedding is None:
-                    # R1b (write integrity, #564): on UPDATE, a failed embedding would SET embedding=NULL
-                    # — wiping a previously-searchable memory AND desyncing content vs vector. Refuse the
+                    # Write integrity: on UPDATE, a failed embedding would set embedding=NULL,
+                    # wiping a previously-searchable memory and desyncing content vs vector. Refuse the
                     # update and keep the prior good row intact.
                     logger.error(
                         f"memory_update: embedding unavailable for {memory_id} — refusing update that "
@@ -1543,12 +1529,21 @@ class NahMemoryMCPServer:
             graphrag_total_entities = 0
 
             graphrag_output_path = os.environ.get(
-                "GRAPHRAG_OUTPUT_PATH", "/Users/human/notahuman/data-management/graphrag/output"
+                "NAH_REMEMBER_GRAPHRAG_OUTPUT_PATH",
+                os.environ.get("GRAPHRAG_OUTPUT_PATH", ""),
             )
-            entities_parquet = os.path.join(graphrag_output_path, "entities.parquet")
-            stats_json = os.path.join(graphrag_output_path, "stats.json")
+            entities_parquet = (
+                os.path.join(graphrag_output_path, "entities.parquet")
+                if graphrag_output_path
+                else ""
+            )
+            stats_json = (
+                os.path.join(graphrag_output_path, "stats.json")
+                if graphrag_output_path
+                else ""
+            )
 
-            if os.path.exists(entities_parquet):
+            if entities_parquet and os.path.exists(entities_parquet):
                 try:
                     entities_df = pd.read_parquet(entities_parquet)
                     graphrag_total_entities = len(entities_df)
@@ -1744,7 +1739,7 @@ class NahMemoryMCPServer:
             return {
                 "success": True,
                 "stats": stats,
-                "omniroute_endpoint": NAH_MODEL_GATEWAY_URL,
+                "embedding_endpoint": EMBEDDING_URL,
                 "embedding_model": EMBEDDING_MODEL,
                 "embedding_dim": EMBEDDING_DIM,
             }
@@ -1759,7 +1754,7 @@ class NahMemoryMCPServer:
 class MCPHandler:
     """JSON-RPC handler for MCP protocol"""
 
-    def __init__(self, server: NahMemoryMCPServer, phase3: Optional[NahRememberPhase3] = None):
+    def __init__(self, server: NahRememberMCPServer, phase3: Optional[NahRememberPhase3] = None):
         self.server = server
         self.phase3 = phase3
         self.tools = {
@@ -1834,7 +1829,7 @@ class MCPHandler:
                         },
                         "application": {
                             "type": "string",
-                            "description": "Application name (claude-desktop, opencode-framework, etc.)",
+                            "description": "Application or agent name (e.g., hermes, claude-code, codex, custom-agent)",
                         },
                         "user_id": {
                             "type": "string",
@@ -2304,7 +2299,7 @@ class MCPHandler:
                     "result": {
                         "protocolVersion": "2024-11-05",
                         "capabilities": {"tools": {}},
-                        "serverInfo": {"name": "nah-memory-unified", "version": "1.0.0"},
+                        "serverInfo": {"name": "nah-remember", "version": "0.1.0"},
                     },
                 }
             elif method == "notifications/initialized":
@@ -2364,9 +2359,13 @@ class MCPHandler:
             return {"jsonrpc": "2.0", "id": safe_id, "error": {"code": -32603, "message": str(e)}}
 
 
+# Backward-compatibility alias
+NahMemoryMCPServer = NahRememberMCPServer
+
+
 async def main():
     """Main entry point for MCP server"""
-    server = NahMemoryMCPServer()
+    server = NahRememberMCPServer()
     phase3 = None
     try:
         await server.setup()
@@ -2378,7 +2377,7 @@ async def main():
         # Continue anyway - server can handle some operations without full setup
     handler = MCPHandler(server, phase3)
 
-    logger.info("NAH Memory Unified MCP Server started (stdio mode)")
+    logger.info("NAH Remember MCP Server started (stdio mode)")
 
     # Read from stdin, write to stdout (synchronous I/O like rag-memory)
     request_id = 0  # Track request ID for error responses
