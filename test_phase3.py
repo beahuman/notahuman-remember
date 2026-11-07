@@ -69,7 +69,7 @@ class TestPhase3:
             # - recency: 1.0 - (5 / 30) = 0.833
             # - composite: 0.8*0.4 + 0.6*0.3 + 0.833*0.3 = 0.32 + 0.18 + 0.25 = 0.75
 
-            composite = result.compute_composite_score()
+            composite = result.compute_composite_score(0.4, 0.3, 0.3, 0.0)
             assert 0.74 < composite < 0.76, f"Expected ~0.75, got {composite}"
 
             print(f"  ✅ Composite score calculation correct: {composite:.3f}")
