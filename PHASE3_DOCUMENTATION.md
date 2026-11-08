@@ -1,38 +1,45 @@
-# NAH Remember Phase 3: Retrieval + Query Routing with Ranking
+# NAH Remember Phase 3: Retrieval + Query Routing with Bet 2 Ranking
 
 **Status:** ✅ Complete  
-**Scope:** Cross-layer query interface with ranking algorithm  
-**Approval:** Gate cleared 23:16 (10:35 PM)  
-**Implementation Date:** 2025-03-18
+**Scope:** 5-layer cross-layer query interface with Bet 2 hybrid ranking algorithm  
+**Ecosystem:** nah-neural / Subsystem: nah-remember  
+**Updated:** 2026-11-08 (Remediation PR #1208)
 
 ## Overview
 
-Phase 3 implements the **unified ranked retrieval system** for nah-remember. It provides:
+Phase 3 implements the **unified ranked retrieval system** for nah-remember under the nah-neural umbrella. It provides:
 
-1. **Cross-layer query interface** - Query across 4 memory layers (ephemeral, episodic, semantic, meta)
-2. **Composite ranking algorithm** - Formula: `significance_score × 0.4 + access_count × 0.3 + recency × 0.3`
-3. **Type filtering** - Query specific layers or all at once
-4. **Result composition** - Unified ranking across all namespaces
+1. **Cross-layer query interface** - Query across 5 decoupled memory layers (ephemeral, episodic, semantic, procedural, meta)
+2. **Bet 2 hybrid ranking algorithm** - Multiplicative usage reinforcement with situational affinity
+3. **Type filtering** - Query specific layers or all 5 at once
+4. **Result composition** - Unified ranking across all cognitive namespaces
 
 ## Architecture
 
-### Memory Layers
+### Memory Layers (5 Cognitive Layers)
 
-| Layer | Source | Use Case | Recency Weight |
-|-------|--------|----------|---|
-| **Ephemeral** | Recent messages (< 24h) | Current context, hot state | High |
-| **Episodic** | Context snapshots + entities | Project state, relationships | Medium |
-| **Semantic** | Semantic memories + procedures | Long-term knowledge, patterns | Low |
-| **Meta** | Entity relationships + history | Evolution, lineage, topology | Low |
+| Layer | Source Table | Use Case | Retention / Recency |
+|---|---|---|---|
+| **Ephemeral** | `nah_remember.messages` | Recent conversation context, hot working buffer | High recency (< 48h) |
+| **Episodic** | `nah_remember.episodes`, `episode_events` | True narrative episodes, timeline beats, outcomes | Medium recency |
+| **Semantic** | `nah_remember.semantic_memories`, `entities` | Fact engrams, entity knowledge graph | Persistent |
+| **Procedural** | `nah_remember.procedures`, `procedure_executions` | Executable playbooks, learned workflows, tools | Persistent (dynamic success rate) |
+| **Meta** | `nah_remember.relationships`, `memory_history` | Cross-entity graph topology, evolution lineage | Persistent |
 
-### Ranking Formula
+### Bet 2 Hybrid Ranking Formula
 
 ```python
-composite_score = (
-    significance_score × 0.4 +      # Importance/relevance (40%)
-    access_count × 0.3 +            # Frequency/utility (30%)
-    recency × 0.3                   # Freshness (30%)
-)
+# Base match across 4 normalized components + situational condition signals:
+MatchScore = (
+    similarity × 0.4 +              # Vector semantic similarity (40%)
+    significance_score × 0.3 +      # Intrinsic importance (30%)
+    recency × 0.2 +                 # Freshness decay (20%)
+    access_count_score × 0.1        # Logarithmic access frequency (10%)
+) + (situational_affinity × 0.2)    # Task, context, agent, pressure affinity
+
+# Bet 2 Multiplicative Usage Reinforcement:
+CompositeScore = MatchScore * (1.0 + beta * reinforcement_score)
+# Default beta = 1.2
 ```
 
 **Weights are normalized** automatically if they don't sum to 1.0.

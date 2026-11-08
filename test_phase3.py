@@ -7,7 +7,7 @@ Tests for ranked retrieval, query routing, and cross-layer composition
 import asyncio
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -49,7 +49,7 @@ class TestPhase3:
             await self.pool.close()
 
     async def test_ranked_result_scoring(self):
-        """Test RankedResult composite score calculation"""
+        """Test RankedResult composite score calculation with Bet 2 formulation"""
         print("\nTest: RankedResult composite scoring...")
         try:
             result = RankedResult(
@@ -57,20 +57,29 @@ class TestPhase3:
                 memory_id="test-001",
                 content="Test content",
                 layer=MemoryLayer.SEMANTIC,
+                similarity=0.8,
                 significance_score=0.8,
                 access_count=5,
-                created_at=datetime.utcnow() - timedelta(days=5),
+                created_at=datetime.now(timezone.utc) - timedelta(days=5),
                 recency_window_days=30,
             )
 
-            # Expected scores:
-            # - significance: 0.8
-            # - access (normalized): (1 + 5) / 10 = 0.6
-            # - recency: 1.0 - (5 / 30) = 0.833
-            # - composite: 0.8*0.4 + 0.6*0.3 + 0.833*0.3 = 0.32 + 0.18 + 0.25 = 0.75
+            # Expected scores with weights:
+            # - similarity: 0.8 * 0.4 = 0.32
+            # - significance: 0.8 * 0.3 = 0.24
+            # - recency: (1.0 - 5/30) * 0.15 = 0.8333 * 0.15 = 0.125
+            # - access: ((1 + 5) / 10) * 0.15 = 0.6 * 0.15 = 0.09
+            # - base sum: 0.32 + 0.24 + 0.125 + 0.09 = 0.775
+            weights = {
+                "similarity": 0.4,
+                "significance": 0.3,
+                "recency": 0.15,
+                "access": 0.15,
+                "beta": 1.0,
+            }
 
-            composite = result.compute_composite_score()
-            assert 0.74 < composite < 0.76, f"Expected ~0.75, got {composite}"
+            composite = result.compute_composite_score(weights=weights)
+            assert 0.77 < composite < 0.78, f"Expected ~0.775, got {composite}"
 
             print(f"  ✅ Composite score calculation correct: {composite:.3f}")
             self.results.append(("Composite Score Calculation", True, f"{composite:.3f}"))
@@ -88,8 +97,9 @@ class TestPhase3:
                 content="This is test content for serialization",
                 layer=MemoryLayer.SEMANTIC,
                 significance_score=0.7,
+                similarity=0.9,
                 access_count=3,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
                 metadata={"source": "test", "tags": ["test", "phase3"]},
             )
 
@@ -127,7 +137,7 @@ class TestPhase3:
             dummy_embedding = [0.0] * 1024
 
             results = await self.phase3.query_ephemeral(
-                dummy_embedding, embedding_dim=1024, hours=24, limit=5
+                dummy_embedding, embedding_dim=1024, hours=48, limit=5
             )
 
             print(f"  ✅ Ephemeral query returned {len(results)} results")
@@ -296,7 +306,8 @@ class TestPhase3:
                 dummy_embedding,
                 memory_type="all",
                 limit=5,
-                significance_weight=0.5,  # Sum = 1.5
+                similarity_weight=0.5,
+                significance_weight=0.5,
                 access_weight=0.5,
                 recency_weight=0.5,
             )
@@ -305,19 +316,89 @@ class TestPhase3:
             weights = result["weights"]
 
             # Check normalized sum ~= 1.0
-            total = weights["significance"] + weights["access_count"] + weights["recency"]
+            total = (
+                weights["similarity"]
+                + weights["significance"]
+                + weights["access"]
+                + weights["recency"]
+            )
             assert 0.99 < total < 1.01, f"Weights don't sum to 1.0: {total}"
 
             print("  ✅ Weights normalized correctly")
-            print("     Original: 0.5, 0.5, 0.5 (sum=1.5)")
+            print("     Original: 0.5, 0.5, 0.5, 0.5 (sum=2.0)")
             print(
-                f"     Normalized: {weights['significance']:.3f}, {weights['access_count']:.3f}, {weights['recency']:.3f} (sum={total:.3f})"
+                f"     Normalized: {weights['similarity']:.3f}, {weights['significance']:.3f}, {weights['access']:.3f}, {weights['recency']:.3f} (sum={total:.3f})"
             )
 
             self.results.append(("Weight Normalization", True, f"Sum={total:.3f}"))
         except Exception as e:
             print(f"  ❌ Test failed: {e}")
             self.results.append(("Weight Normalization", False, str(e)))
+
+    async def test_episodic_lifecycle(self):
+        """Test episodic lifecycle: open, append event, close, and query"""
+        print("\nTest: Episodic lifecycle (open -> event -> close)...")
+        try:
+            # 1. Open episode
+            ep_id = await self.phase3.open_episode(
+                session_id="test-session-001",
+                task_type="unit_test",
+                agent_id="astro",
+                hunt_context="test_episodic_lifecycle",
+                initial_pressure=0.2,
+                metadata={"test": True},
+            )
+            assert ep_id is not None and len(ep_id) == 36, f"Invalid episode UUID: {ep_id}"
+
+            # 2. Append event
+            evt_id = await self.phase3.append_episode_event(
+                episode_id=ep_id,
+                event_type="test_action",
+                details={"step": 1, "action": "verify_schema"},
+                pressure=0.25,
+            )
+            assert evt_id > 0, f"Invalid event ID: {evt_id}"
+
+            # 3. Close episode
+            closed = await self.phase3.close_episode(
+                episode_id=ep_id,
+                outcome="SUCCESS",
+                final_summary="Episodic test sequence passed successfully",
+                lessons_learned=["Episodic layer operational in nah-remember"],
+            )
+            assert closed is True, "Failed to close episode"
+
+            # 4. Query episodic layer with condition signature
+            dummy_embedding = [0.0] * 1024
+            results = await self.phase3.query_episodic(
+                dummy_embedding,
+                embedding_dim=1024,
+                task_type="unit_test",
+                agent_id="astro",
+                limit=5,
+            )
+            found = any(r.memory_id == ep_id for r in results)
+            assert found, f"Created episode {ep_id} not found in query"
+
+            print(f"  ✅ Episodic lifecycle completed successfully ({ep_id})")
+            self.results.append(("Episodic Lifecycle", True, f"Created & queried {ep_id}"))
+        except Exception as e:
+            print(f"  ❌ Test failed: {e}")
+            self.results.append(("Episodic Lifecycle", False, str(e)))
+
+    async def test_procedural_query(self):
+        """Test procedural layer query"""
+        print("\nTest: Procedural layer query...")
+        try:
+            dummy_embedding = [0.0] * 1024
+            results = await self.phase3.query_procedural(
+                dummy_embedding, embedding_dim=1024, limit=5
+            )
+            print(f"  ✅ Procedural query returned {len(results)} results")
+            self.results.append(("Procedural Query", True, f"{len(results)} results"))
+        except Exception as e:
+            print(f"  ❌ Test failed: {e}")
+            self.results.append(("Procedural Query", False, str(e)))
 
     async def test_mcp_integration(self):
         """Test MCP integration hook"""
@@ -327,6 +408,9 @@ class TestPhase3:
             add_phase3_tools_to_mcp(mcp_tools, self.phase3)
 
             assert "nah_remember_search_ranked" in mcp_tools
+            assert "nah_remember_episode_open" in mcp_tools
+            assert "nah_remember_episode_append_event" in mcp_tools
+            assert "nah_remember_episode_close" in mcp_tools
             assert callable(mcp_tools["nah_remember_search_ranked"])
 
             print("  ✅ MCP integration successful")
@@ -354,7 +438,9 @@ class TestPhase3:
 
             # Query layer tests
             await self.test_ephemeral_query()
+            await self.test_episodic_lifecycle()
             await self.test_episodic_query()
+            await self.test_procedural_query()
             await self.test_semantic_query()
             await self.test_meta_query()
 

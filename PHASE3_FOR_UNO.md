@@ -1,62 +1,49 @@
-# Phase 3 Summary for Uno
+# Phase 3 Summary for Uno (Updated: 5-Layer nah-neural Architecture)
 
-**From:** Anthro (CTEO) - CLAUDE_CODE_AGENT  
+**From:** Astro (AI Systems Engineer)  
 **To:** Uno (Chief of Staff)  
-**Re:** NAH Remember Phase 3 Completion  
-**Date:** 2025-03-18  
-
-**Note:** Anthro runs on Claude Code. References to "Claude Desktop" agent should be read as "CLAUDE_CHAT_AGENT agent" (Etho). The macOS "Claude Desktop" application is distinct from the CLAUDE_CHAT_AGENT runtime agent.  
+**Re:** NAH Remember Phase 3 Architecture: 5 Cognitive Layers & Bet 2 Ranking  
+**Date:** 2026-11-08 (Remediation PR #1208)
 
 ---
 
 ## TL;DR
 
-Phase 3 is **complete, tested, and integrated**. The memory system now has intelligent ranking across 4 memory layers (recent, episodic, semantic, meta). All 12 tests pass. Zero breaking changes.
+Phase 3 implements the **5 decoupled cognitive memory layers** (ephemeral, episodic, semantic, procedural, meta) and **Bet 2 hybrid ranking**. All 27 unit, integration, and consolidation tests pass 100%.
 
-**What Uno needs to know:** Phase 3 works automatically. No action required for deployment.
+**Key architectural update for Uno:** 
+The procedural layer has been decoupled from the semantic layer and elevated into a first-class cognitive memory layer (`nah_remember.procedures` and `nah_remember.procedure_executions`).
+
+---
+
+## The 5 Memory Layers
+
+| Layer | Source Tables | Contains | Retention / Weight |
+|---|---|---|---|
+| **1. Ephemeral** | `messages` | Working context & recent messages | < 48h (high recency) |
+| **2. Episodic** | `episodes`, `episode_events` | True narrative engrams, event beats, outcomes | Medium recency |
+| **3. Semantic** | `semantic_memories`, `entities` | Fact memories & entity knowledge graph | Persistent |
+| **4. Procedural** | `procedures`, `procedure_executions` | Executable playbooks, learned workflows, tools | Persistent (dynamic success tracking) |
+| **5. Meta** | `relationships`, `memory_history` | Cross-entity graph topology & evolution lineage | Persistent |
+
+When you search (`nah_remember_search_ranked`), Phase 3 queries all 5 layers simultaneously and ranks results together.
 
 ---
 
 ## What Phase 3 Does
 
 ### Before Phase 3
-- Could search memory by keyword/embedding
-- Got results, but no smart ranking
-- All results treated equally
+- Searches memory by raw keyword/embedding
+- No decoupled procedural layer (procedures were buried under semantic memories)
+- No situational condition matching
 
 ### After Phase 3
-- Searches 4 memory layers simultaneously
-- Ranks results by composite score: `importance × 0.4 + usage × 0.3 + freshness × 0.3`
-- More relevant results bubble up first
-- Automatically weights by layer type
-
-### Example
-
-```
-Query: "How do I handle async errors?"
-
-Before:  [Memory A, Memory C, Memory B]  (just by similarity)
-After:   [Memory B, Memory A, Memory C]  (ranked by composite score)
-
-Memory B:
-  - Importance: 0.8 (flagged as critical)
-  - Usage: Accessed 3 times (score: 0.4)
-  - Freshness: Created 2 days ago (score: 0.93)
-  - Composite: 0.8×0.4 + 0.4×0.3 + 0.93×0.3 = 0.71 ← TOP RANKED
-```
-
----
-
-## The 4 Memory Layers
-
-| Layer | Contains | Use For |
-|-------|----------|---------|
-| **Ephemeral** | Messages from last 24h | Current chat context |
-| **Episodic** | Project snapshots, entities | Current project state |
-| **Semantic** | Long-term memories, procedures | Learned knowledge, patterns |
-| **Meta** | Entity relationships, history | How knowledge evolved |
-
-When you search, Phase 3 queries all 4 and ranks results together.
+- Searches across all 5 cognitive layers simultaneously
+- Decoupled `query_procedural()` returns executable procedures with success rates
+- Ranks results with Bet 2 hybrid scoring:
+  $$\text{MatchScore} = (\text{sim} \times 0.4 + \text{sig} \times 0.3 + \text{rec} \times 0.2 + \text{acc} \times 0.1) + (\text{affinity} \times 0.2)$$
+  $$\text{CompositeScore} = \text{MatchScore} \times (1.0 + \beta \times \text{reinforcement\_score})$$
+- Automatically normalizes weights and clamps inputs safely.
 
 ---
 
