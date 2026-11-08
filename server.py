@@ -1816,7 +1816,7 @@ class MCPHandler:
 
         # Register Phase 3 tools if available
         if self.phase3:
-            add_phase3_tools_to_mcp(self.tools, self.phase3)
+            add_phase3_tools_to_mcp(self.tools, self.phase3, self.server.generate_embedding)
             logger.info("Phase 3 tools registered with MCP handler")
 
     def get_tools_list(self) -> List[Dict]:
@@ -2269,6 +2269,179 @@ class MCPHandler:
                         },
                     },
                     "required": ["query"],
+                },
+            },
+            {
+                "name": "nah_remember_search_ranked",
+                "description": (
+                    "Bet 2 ranked multi-layer memory retrieval with situational affinity scoring. "
+                    "Searches across ephemeral, episodic, semantic, procedural, and meta layers with "
+                    "multiplicative usage reinforcement (score * (1 + beta * usage_count))."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Natural language query (vector embedding generated automatically)",
+                        },
+                        "query_embedding": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "description": "Direct 1024-dim query vector (optional if query text is provided)",
+                        },
+                        "memory_type": {
+                            "type": "string",
+                            "enum": [
+                                "ephemeral",
+                                "episodic",
+                                "semantic",
+                                "procedural",
+                                "meta",
+                                "all",
+                            ],
+                            "default": "all",
+                            "description": "Target memory cognitive layer",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "description": "Max ranked results to return",
+                        },
+                        "task_type": {
+                            "type": "string",
+                            "description": "Filter by task type signature (e.g. 'code_refactor', 'incident')",
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Filter by agent ID (e.g. 'astro', 'omo')",
+                        },
+                        "hunt_context": {
+                            "type": "string",
+                            "description": "Filter by search/hunt target context",
+                        },
+                        "pressure": {
+                            "type": "number",
+                            "description": "Environmental/session pressure (0.0 to 1.0)",
+                        },
+                        "similarity_weight": {"type": "number", "default": 0.4},
+                        "significance_weight": {"type": "number", "default": 0.3},
+                        "recency_weight": {"type": "number", "default": 0.2},
+                        "access_weight": {"type": "number", "default": 0.1},
+                        "beta": {
+                            "type": "number",
+                            "default": 1.2,
+                            "description": "Usage reinforcement multiplier",
+                        },
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "name": "nah_remember_episode_open",
+                "description": "Open a discrete episodic memory container for a session task or autonomous run.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Title of the episode"},
+                        "goal": {"type": "string", "description": "Goal or intended objective"},
+                        "session_id": {"type": "string", "description": "Session identifier"},
+                        "task_type": {"type": "string", "description": "Categorical task type"},
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent initiating the episode",
+                        },
+                        "hunt_context": {"type": "string", "description": "Problem/hunt domain"},
+                        "initial_pressure": {
+                            "type": "number",
+                            "default": 0.5,
+                            "description": "Initial pressure level",
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Arbitrary metadata dictionary",
+                        },
+                    },
+                    "required": ["title"],
+                },
+            },
+            {
+                "name": "nah_remember_episode_append_event",
+                "description": "Append a timeline event beat (action, observation, error, pivot, breakthrough, decision) to an open episode.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "episode_id": {
+                            "type": "string",
+                            "description": "UUID of the active episode",
+                        },
+                        "event_type": {
+                            "type": "string",
+                            "enum": [
+                                "action",
+                                "observation",
+                                "error",
+                                "pivot",
+                                "breakthrough",
+                                "decision",
+                            ],
+                            "description": "Event classification type",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Human/agent-readable description",
+                        },
+                        "details": {
+                            "type": "object",
+                            "description": "Event payload or telemetry details",
+                        },
+                        "pressure": {"type": "number", "description": "Updated pressure level"},
+                        "tool_name": {
+                            "type": "string",
+                            "description": "Tool invoked, if applicable",
+                        },
+                        "tool_input": {"type": "object", "description": "Tool parameters"},
+                        "tool_result": {"type": "object", "description": "Tool output/result"},
+                    },
+                    "required": ["episode_id", "event_type"],
+                },
+            },
+            {
+                "name": "nah_remember_episode_close",
+                "description": "Close an episodic memory container with outcome, narrative summary, and lessons learned.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "episode_id": {
+                            "type": "string",
+                            "description": "UUID of the episode to close",
+                        },
+                        "outcome": {
+                            "type": "string",
+                            "enum": ["success", "failure", "partial", "aborted"],
+                            "default": "success",
+                            "description": "Terminal outcome of the episode",
+                        },
+                        "final_summary": {
+                            "type": "string",
+                            "description": "Narrative synthesis of what happened",
+                        },
+                        "retrospective": {
+                            "type": "string",
+                            "description": "Retrospective reflections",
+                        },
+                        "lessons_learned": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Extracted durable lessons",
+                        },
+                        "embedding": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "description": "Optional 1024-dim embedding of the final summary",
+                        },
+                    },
+                    "required": ["episode_id"],
                 },
             },
         ]
