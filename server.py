@@ -2691,5 +2691,10 @@ async def main():
     await server.cleanup()
 
 
-if __name__ == "__main__":
+def main_cli():
+    """Entry point for CLI execution."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    main_cli()
