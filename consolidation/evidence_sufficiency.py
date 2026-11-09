@@ -23,9 +23,9 @@ from typing import Dict, List, Any
 def sufficient(
     stream: List[int],
     prior: float = 0.5,
-    cost_act: float = 2.0,
+    cost_act: float = 5.0,
     cost_wait: float = 1.0,
-    cost_wrong: float = 20.0,
+    cost_wrong: float = 50.0,
 ) -> Dict[str, Any]:
     """Return evidence-sufficiency decision for an observed recall / performance stream.
 

@@ -315,9 +315,25 @@ CREATE TABLE IF NOT EXISTS nah_remember.episode_events (
 CREATE INDEX IF NOT EXISTS idx_episode_events_episode ON nah_remember.episode_events(episode_id);
 CREATE INDEX IF NOT EXISTS idx_episode_events_type ON nah_remember.episode_events(event_type);
 
+-- ==================== EPISODE CAUSALITY (Layer 2 Causal Graph) ====================
+CREATE TABLE IF NOT EXISTS nah_remember.episode_causality (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source_episode_id UUID NOT NULL REFERENCES nah_remember.episodes(id) ON DELETE CASCADE,
+    target_episode_id UUID NOT NULL REFERENCES nah_remember.episodes(id) ON DELETE CASCADE,
+    causal_type VARCHAR(100) NOT NULL,
+    description TEXT,
+    confidence FLOAT DEFAULT 1.0,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(source_episode_id, target_episode_id, causal_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_episode_causality_source ON nah_remember.episode_causality(source_episode_id);
+CREATE INDEX IF NOT EXISTS idx_episode_causality_target ON nah_remember.episode_causality(target_episode_id);
+
 -- Verification
 DO $$
 BEGIN
     RAISE NOTICE 'NAH Neural Unified Memory schema created successfully!';
-    RAISE NOTICE 'Tables: sessions, messages, context_snapshots, entities, relationships, semantic_memories, memory_history, procedures, procedure_executions, episodes, episode_events';
+    RAISE NOTICE 'Tables: sessions, messages, context_snapshots, entities, relationships, semantic_memories, memory_history, procedures, procedure_executions, episodes, episode_events, episode_causality';
 END $$;
