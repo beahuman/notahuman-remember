@@ -5,8 +5,8 @@ Ecosystem: nah-neural / Subsystem: nah-remember / Module: consolidation
 
 PRIOR = 0.5
 COST_WAIT = 1.0
-COST_ACT = 2.0
-COST_WRONG = 20.0
+COST_ACT = 5.0
+COST_WRONG = 50.0
 
 
 def compute_thresholds(cost_act=COST_ACT, cost_wait=COST_WAIT, cost_wrong=COST_WRONG):

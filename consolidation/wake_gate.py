@@ -11,8 +11,12 @@ Algorithm:
   6. Promote iff post_score >= prior_score and evidence is sufficient; else quarantine.
 """
 
+import datetime
+import json
 import logging
+from pathlib import Path
 from typing import Dict, List, Any, Optional
+import uuid
 
 from consolidation.evidence_sufficiency import sufficient
 from consolidation.trial_balance import trial_balance
@@ -20,6 +24,44 @@ from consolidation.trial_balance import trial_balance
 logger = logging.getLogger(__name__)
 
 EXPECTED_PRODUCER = "nah-neural.dreamer.propose/deterministic"
+DEFAULT_QUARANTINE_DIR = Path(__file__).parent / "_quarantine"
+
+
+def write_quarantine(
+    candidate: Dict[str, Any],
+    reasons: List[str],
+    score_before: float,
+    score_after: float,
+    *,
+    quarantine_dir: Optional[Path] = None,
+) -> Path:
+    """Write a reversible quarantine record. Never deletes the original candidate."""
+    q_dir = Path(quarantine_dir) if quarantine_dir else DEFAULT_QUARANTINE_DIR
+    q_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    q_id = str(uuid.uuid4())[:8]
+    q_path = q_dir / f"quarantine_{ts}_{q_id}.json"
+
+    record = {
+        "candidate": candidate,
+        "score_before": score_before,
+        "score_after": score_after,
+        "reasons": reasons,
+        "quarantined_at": ts,
+        "restorable": True,
+    }
+    q_path.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
+    logger.info(f"Wrote reversible quarantine record to {q_path}")
+    return q_path
+
+
+def restore_quarantine(quarantine_path: str) -> Dict[str, Any]:
+    """Restore a quarantined candidate dict from its reversible quarantine record."""
+    p = Path(quarantine_path)
+    if not p.exists():
+        raise FileNotFoundError(f"Quarantine file does not exist: {quarantine_path}")
+    record = json.loads(p.read_text(encoding="utf-8"))
+    return record.get("candidate", {})
 
 
 def evaluate_wake_gate(
@@ -32,6 +74,7 @@ def evaluate_wake_gate(
     baseline_weights: Optional[Dict[str, float]] = None,
     sealed_anchors: Optional[set] = None,
     universe_size: int = 100,
+    quarantine_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Evaluate candidate consolidation proposal through independent wake probe gate."""
 
@@ -77,9 +120,14 @@ def evaluate_wake_gate(
 
     # 5. Check performance regression
     if post_avg < prior_avg:
+        reasons = [f"performance regression: post ({post_avg:.3f}) < prior ({prior_avg:.3f})"]
+        q_path = write_quarantine(
+            candidate, reasons, prior_avg, post_avg, quarantine_dir=quarantine_dir
+        )
         return {
             "verdict": "quarantine",
-            "reason": f"performance regression: post ({post_avg:.3f}) < prior ({prior_avg:.3f})",
+            "reason": reasons[0],
+            "quarantine_path": str(q_path),
             "prior_score": prior_avg,
             "post_score": post_avg,
             "sprt": sprt,

@@ -711,6 +711,178 @@ class NahRememberPhase3:
         logger.info(f"Closed episode {ep_uuid} with outcome {norm_outcome}")
         return True
 
+    # ==================== PROCEDURAL PRIMITIVES ====================
+
+    async def save_procedure(
+        self,
+        name: str,
+        description: str,
+        steps: List[Any],
+        trigger_conditions: Optional[List[str]] = None,
+        procedure_type: str = "workflow",
+        embedding: Optional[List[float]] = None,
+        initial_success_rate: float = 1.0,
+        agent_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        embedding_dim: int = EMBEDDING_DIM,
+    ) -> str:
+        """Create or update a learned procedure in Layer 4 (procedural memory)."""
+        proc_id = uuid.uuid4()
+        emb_str = self._format_vector(embedding, embedding_dim) if embedding else None
+        steps_json = json.dumps(steps) if not isinstance(steps, str) else steps
+        meta_json = json.dumps(metadata or {}) if not isinstance(metadata, str) else metadata
+        triggers_json = (
+            json.dumps(trigger_conditions or [])
+            if not isinstance(trigger_conditions, str)
+            else trigger_conditions
+        )
+
+        async with self.pool.acquire() as conn:
+            actual_id = await conn.fetchval(
+                """
+                INSERT INTO nah_remember.procedures (
+                    id, name, procedure_type, description, steps,
+                    trigger_conditions, execution_count, success_rate,
+                    metadata, embedding, agent_id, status, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5::jsonb,
+                    $6::jsonb, 0, $7,
+                    $8::jsonb, CASE WHEN $9::text IS NOT NULL THEN $9::vector ELSE NULL END,
+                    $10, 'active', NOW(), NOW()
+                )
+                ON CONFLICT (name) DO UPDATE SET
+                    description = EXCLUDED.description,
+                    steps = EXCLUDED.steps,
+                    trigger_conditions = EXCLUDED.trigger_conditions,
+                    metadata = EXCLUDED.metadata,
+                    embedding = COALESCE(EXCLUDED.embedding, nah_remember.procedures.embedding),
+                    updated_at = NOW()
+                RETURNING id
+                """,
+                proc_id,
+                name,
+                procedure_type,
+                description,
+                steps_json,
+                triggers_json,
+                float(initial_success_rate),
+                meta_json,
+                emb_str,
+                agent_id,
+            )
+        logger.info(f"Saved procedure {actual_id} ({name}) in procedural layer")
+        return str(actual_id)
+
+    async def record_procedure_execution(
+        self,
+        procedure_id: str,
+        success: bool,
+        duration_ms: Optional[float] = None,
+        session_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        input_data: Optional[Dict[str, Any]] = None,
+        output_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Record a procedure execution run and dynamically evolve its success_rate."""
+        proc_uuid = uuid.UUID(procedure_id)
+        inp_json = (
+            json.dumps(input_data) if input_data and not isinstance(input_data, str) else input_data
+        )
+        out_json = (
+            json.dumps(output_data)
+            if output_data and not isinstance(output_data, str)
+            else output_data
+        )
+        status = "completed" if success else "failed"
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # Verify session_id exists in sessions table to prevent FK violation
+                effective_session_id = None
+                if session_id:
+                    sess_exists = await conn.fetchval(
+                        "SELECT EXISTS(SELECT 1 FROM nah_remember.sessions WHERE session_id = $1)",
+                        session_id,
+                    )
+                    if sess_exists:
+                        effective_session_id = session_id
+
+                # 1. Insert execution record
+                await conn.execute(
+                    """
+                    INSERT INTO nah_remember.procedure_executions (
+                        procedure_id, session_id, status, started_at, completed_at,
+                        duration_ms, input_data, output_data, error_message
+                    ) VALUES (
+                        $1, $2, $3, NOW(), NOW(),
+                        $4, CASE WHEN $5::text IS NOT NULL THEN $5::jsonb ELSE NULL END,
+                        CASE WHEN $6::text IS NOT NULL THEN $6::jsonb ELSE NULL END, $7
+                    )
+                    """,
+                    proc_uuid,
+                    effective_session_id,
+                    status,
+                    duration_ms,
+                    inp_json,
+                    out_json,
+                    error_message,
+                )
+
+                # 2. Fetch current procedure metrics
+                row = await conn.fetchrow(
+                    """
+                    SELECT execution_count, success_rate, avg_duration_ms
+                    FROM nah_remember.procedures
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    proc_uuid,
+                )
+                if not row:
+                    raise ValueError(f"Procedure {procedure_id} not found")
+
+                old_count = row["execution_count"] or 0
+                old_rate = row["success_rate"] if row["success_rate"] is not None else 0.5
+                old_avg_dur = row["avg_duration_ms"] or 0.0
+
+                new_count = old_count + 1
+                succ_val = 1.0 if success else 0.0
+                new_rate = ((old_rate * old_count) + succ_val) / new_count
+
+                new_avg_dur = old_avg_dur
+                if duration_ms is not None:
+                    new_avg_dur = ((old_avg_dur * old_count) + duration_ms) / new_count
+
+                # 3. Update procedure metrics
+                await conn.execute(
+                    """
+                    UPDATE nah_remember.procedures
+                    SET execution_count = $1,
+                        success_rate = $2,
+                        avg_duration_ms = $3,
+                        last_executed_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = $4
+                    """,
+                    new_count,
+                    new_rate,
+                    new_avg_dur,
+                    proc_uuid,
+                )
+
+        logger.info(
+            f"Procedure {procedure_id} execution logged: success={success}, "
+            f"new_count={new_count}, new_success_rate={new_rate:.4f}"
+        )
+        return {
+            "success": True,
+            "procedure_id": procedure_id,
+            "recorded_success": success,
+            "execution_count": new_count,
+            "success_rate": round(new_rate, 4),
+            "avg_duration_ms": round(new_avg_dur, 2),
+        }
+
     # ==================== UNIFIED RANKED SEARCH ====================
 
     async def remember_search_ranked(
@@ -948,8 +1120,67 @@ def add_phase3_tools_to_mcp(
         )
         return {"success": closed, "episode_id": episode_id, "outcome": outcome}
 
+    async def procedure_save_wrapper(
+        name: str,
+        description: str,
+        steps: List[Any],
+        trigger_conditions: Optional[List[str]] = None,
+        procedure_type: str = "workflow",
+        initial_success_rate: float = 1.0,
+        agent_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        embedding: Optional[List[float]] = None,
+    ) -> Dict[str, Any]:
+        if not embedding and embedding_fn:
+            text_to_embed = f"{name}: {description}"
+            if trigger_conditions:
+                text_to_embed += " Triggers: " + " ".join(trigger_conditions)
+            try:
+                embedding = await embedding_fn(text_to_embed)
+            except Exception as e:
+                logger.warning(f"Procedure embedding generation failed: {e}")
+
+        proc_id = await phase3.save_procedure(
+            name=name,
+            description=description,
+            steps=steps,
+            trigger_conditions=trigger_conditions,
+            procedure_type=procedure_type,
+            embedding=embedding,
+            initial_success_rate=initial_success_rate,
+            agent_id=agent_id,
+            metadata=metadata,
+        )
+        return {
+            "success": True,
+            "procedure_id": proc_id,
+            "name": name,
+            "success_rate": initial_success_rate,
+        }
+
+    async def procedure_execute_wrapper(
+        procedure_id: str,
+        success: bool,
+        duration_ms: Optional[float] = None,
+        session_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        input_data: Optional[Dict[str, Any]] = None,
+        output_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return await phase3.record_procedure_execution(
+            procedure_id=procedure_id,
+            success=success,
+            duration_ms=duration_ms,
+            session_id=session_id,
+            error_message=error_message,
+            input_data=input_data,
+            output_data=output_data,
+        )
+
     mcp_handler_tools["nah_remember_search_ranked"] = remember_search_ranked_wrapper
     mcp_handler_tools["nah_remember_episode_open"] = episode_open_wrapper
     mcp_handler_tools["nah_remember_episode_append_event"] = episode_append_event_wrapper
     mcp_handler_tools["nah_remember_episode_close"] = episode_close_wrapper
-    logger.info("nah-neural Phase 3 tools registered with MCP handler")
+    mcp_handler_tools["nah_remember_procedure_save"] = procedure_save_wrapper
+    mcp_handler_tools["nah_remember_procedure_execute"] = procedure_execute_wrapper
+    logger.info("nah-neural Phase 3 & Procedural tools registered with MCP handler")

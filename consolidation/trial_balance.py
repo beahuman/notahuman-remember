@@ -18,6 +18,16 @@ from consolidation.ledger import net_ledger
 
 DEFAULT_BLAST_RADIUS_FRAC = 0.20
 
+VALID_SOURCES: Set[str] = {
+    "episode",
+    "reinforcement",
+    "session",
+    "procedural_execution",
+    "dreamer_engine",
+    "user_explicit",
+    "sieve_balance",
+}
+
 
 def _get_deltas(candidate: Dict[str, Any]) -> Dict[str, Decimal]:
     """Return Decimal-valued deltas from candidate."""
@@ -29,7 +39,17 @@ def _get_deltas(candidate: Dict[str, Any]) -> Dict[str, Decimal]:
 def check_conservation(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) -> Tuple[bool, str]:
     """Layer 1: each delta must equal net_ledger(real_entries)[mid] exactly."""
     deltas = _get_deltas(candidate)
-    real_entries = [e for e in ledger if e.get("source") != "synthetic"]
+
+    # Fail-closed validation of ledger sources (D4 fix)
+    untrusted = [
+        e.get("source")
+        for e in ledger
+        if e.get("source") not in VALID_SOURCES and e.get("source") != "synthetic"
+    ]
+    if untrusted:
+        return False, f"untrusted ledger sources: {untrusted}"
+
+    real_entries = [e for e in ledger if e.get("source") in VALID_SOURCES]
     net_real = net_ledger(real_entries)
 
     failures = []
@@ -46,7 +66,7 @@ def check_conservation(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) 
 def check_orphans(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) -> Tuple[bool, str]:
     """Layer 2: every mid in deltas must appear in net_ledger(real_entries)."""
     deltas = _get_deltas(candidate)
-    real_entries = [e for e in ledger if e.get("source") != "synthetic"]
+    real_entries = [e for e in ledger if e.get("source") in VALID_SOURCES]
     net_real = net_ledger(real_entries)
 
     orphans = [mid for mid in deltas if mid not in net_real]

@@ -2444,6 +2444,89 @@ class MCPHandler:
                     "required": ["episode_id"],
                 },
             },
+            {
+                "name": "nah_remember_procedure_save",
+                "description": "Store a crystallized, reusable multi-step workflow into Layer 4 (Procedural Memory) with automatic vector embedding and trigger patterns.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Unique, descriptive name for the procedure (e.g. 'Deploy FastAPI LaunchAgent Service')",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Detailed explanation of what the procedure accomplishes and when to use it",
+                        },
+                        "steps": {
+                            "type": "array",
+                            "description": "Sequential steps or actions comprising this executable procedure",
+                        },
+                        "trigger_conditions": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Keyword patterns or situation cues that trigger this playbook",
+                        },
+                        "procedure_type": {
+                            "type": "string",
+                            "default": "workflow",
+                            "description": "Type of procedure (e.g. 'workflow', 'troubleshooting', 'verification', 'template')",
+                        },
+                        "initial_success_rate": {
+                            "type": "number",
+                            "default": 1.0,
+                            "description": "Initial prior success rate in [0.0, 1.0]",
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent who crystallized this procedure",
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Optional metadata payload",
+                        },
+                    },
+                    "required": ["name", "description", "steps"],
+                },
+            },
+            {
+                "name": "nah_remember_procedure_execute",
+                "description": "Log an execution run of a learned procedure in Layer 4, dynamically updating its success_rate and execution_count.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "procedure_id": {
+                            "type": "string",
+                            "description": "UUID of the procedure that was executed",
+                        },
+                        "success": {
+                            "type": "boolean",
+                            "description": "Whether the procedure execution succeeded or failed",
+                        },
+                        "duration_ms": {
+                            "type": "number",
+                            "description": "Execution runtime duration in milliseconds",
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session in which the execution occurred",
+                        },
+                        "error_message": {
+                            "type": "string",
+                            "description": "Error details if the execution failed",
+                        },
+                        "input_data": {
+                            "type": "object",
+                            "description": "Input parameters passed to the procedure",
+                        },
+                        "output_data": {
+                            "type": "object",
+                            "description": "Result output returned by the procedure",
+                        },
+                    },
+                    "required": ["procedure_id", "success"],
+                },
+            },
         ]
 
     async def _handle_save_memory(self, key: str, value: str, category: str, **_kwargs) -> Dict:
