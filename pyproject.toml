@@ -1,12 +1,12 @@
-# nah-remember — unified MCP server for long-term memory (PostgreSQL + pgvector)
-# Renamed 2026-05-10 from nah-remember-unified per CEO directive (NAH-CONSOLIDATION-2026-05-10)
-# Migrated from requirements.txt 2026-05-10 (NAH-374b)
-# Workspace member of infrastructure/
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "nah-remember"
-version = "0.1.0"
+version = "0.2.0"
 description = "Unified MCP server for nah-remember (PostgreSQL + pgvector long-term memory)"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "asyncpg>=0.29.0",
@@ -20,5 +20,13 @@ dev = [
     "pytest-asyncio>=0.21.0",
 ]
 
-[tool.uv]
-package = false
+[project.scripts]
+nah-remember = "server:main_cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["consolidation*", "distillation*"]
+exclude = ["dashboard*", "logs*", "migrations*", "venv*", "tests*"]
+
+[tool.setuptools]
+py-modules = ["server", "nah_remember_phase3", "context_compaction", "promote_to_brain", "backfill_embeddings"]
