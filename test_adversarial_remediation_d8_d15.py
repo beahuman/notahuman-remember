@@ -22,7 +22,7 @@ import asyncpg
 import pytest
 
 from server import NahMemoryMCPServer
-from nah_remember_phase3 import NahRememberPhase3
+from engine import NahRememberEngine, NahRememberPhase3
 from consolidation.trial_balance import is_trusted_source, trial_balance, DEFAULT_SEALED_ANCHORS
 from consolidation.wake_gate import evaluate_wake_gate, EXPECTED_PRODUCER
 
@@ -297,6 +297,12 @@ async def run_adversarial_suite():
         print("============================================================")
     finally:
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_adversarial_remediation_suite():
+    """Pytest entrypoint for the complete D8-D15 verification suite."""
+    await run_adversarial_suite()
 
 
 if __name__ == "__main__":

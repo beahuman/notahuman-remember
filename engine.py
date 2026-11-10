@@ -168,12 +168,12 @@ class RankedResult:
         }
 
 
-class NahRememberPhase3:
+class NahRememberEngine:
     """nah-neural Memory Retrieval: Bet 2 Hybrid Ranking + 5 Cognitive Layers"""
 
     def __init__(self, pool: asyncpg.pool.Pool):
         self.pool = pool
-        logger.info("nah-neural Phase 3 Engine initialized with Bet 2 ranking")
+        logger.info("nah-remember Cognitive Engine initialized with Bet 2 ranking")
 
     # ==================== SITUATIONAL AFFINITY ====================
 
@@ -1370,12 +1370,14 @@ class NahRememberPhase3:
         return "[" + ",".join(str(e) for e in embedding) + "]"
 
 
-def add_phase3_tools_to_mcp(
+def add_engine_tools_to_mcp(
     mcp_handler_tools: Dict[str, Any],
-    phase3: NahRememberPhase3,
+    engine: NahRememberEngine,
     embedding_fn: Optional[Any] = None,
 ):
-    """Inject Phase 3 tools into MCP handler."""
+    """Inject 5-layer cognitive engine tools into MCP handler."""
+
+    phase3 = engine  # Maintain internal variable name
 
     async def remember_search_ranked_wrapper(
         query: Optional[str] = None,
@@ -1542,4 +1544,9 @@ def add_phase3_tools_to_mcp(
     mcp_handler_tools["nah_remember_episode_close"] = episode_close_wrapper
     mcp_handler_tools["nah_remember_procedure_save"] = procedure_save_wrapper
     mcp_handler_tools["nah_remember_procedure_execute"] = procedure_execute_wrapper
-    logger.info("nah-neural Phase 3 & Procedural tools registered with MCP handler")
+    logger.info("nah-remember Cognitive Engine tools registered with MCP handler")
+
+
+# Backwards compatibility aliases
+NahRememberPhase3 = NahRememberEngine
+add_phase3_tools_to_mcp = add_engine_tools_to_mcp

@@ -67,6 +67,8 @@ psql -d <database_name> -f setup_schema.sql
 | `EMBEDDING_URL` | OpenAI-compatible embedding API endpoint | `http://127.0.0.1:52343/v1/embeddings` |
 | `EMBEDDING_MODEL` | Embedding model name (1024-dim) | `local/bge-m3` |
 | `LLM_API_URL` | Optional LLM endpoint for System 1 distillation | `http://127.0.0.1:20128/v1` |
+| `NAH_REMEMBER_POOL_MIN` | Min asyncpg connections per MCP process | `1` |
+| `NAH_REMEMBER_POOL_MAX` | Max asyncpg connections per MCP process | `3` |
 
 ---
 
@@ -102,7 +104,7 @@ nah-remember
 Run the full verification suite against your local test database:
 
 ```bash
-pytest test_phase3.py test_procedural_tools.py test_dreamer_daemon.py test_wave5_reflex_distillation.py -v
+pytest
 ```
 
 ---

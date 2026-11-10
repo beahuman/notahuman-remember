@@ -33,8 +33,13 @@ import uuid
 import asyncpg
 import httpx
 
-# Import Phase 3
-from nah_remember_phase3 import NahRememberPhase3, add_phase3_tools_to_mcp
+# Import Cognitive Engine
+from engine import (
+    NahRememberEngine,
+    add_engine_tools_to_mcp,
+    NahRememberPhase3,
+    add_phase3_tools_to_mcp,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -74,6 +79,10 @@ EMBEDDING_DIM = int(
 # for a free connection (the 21st concurrent acquire raises instead of blocking).
 POOL_ACQUIRE_TIMEOUT = float(os.getenv("NAH_REMEMBER_POOL_ACQUIRE_TIMEOUT", "10"))
 COMMAND_TIMEOUT = float(os.getenv("NAH_REMEMBER_COMMAND_TIMEOUT", "30"))
+# Connection pool bounds per MCP process — defaults to small bounds (1-3) to ensure
+# high concurrency and subagent swarms (nah-guild) never exhaust PostgreSQL's max_connections.
+POOL_MIN_SIZE = int(os.getenv("NAH_REMEMBER_POOL_MIN", "1"))
+POOL_MAX_SIZE = int(os.getenv("NAH_REMEMBER_POOL_MAX", "3"))
 
 
 class NahMemoryMCPServer:
@@ -101,7 +110,10 @@ class NahMemoryMCPServer:
         """Initialize connection pool and HTTP client"""
         try:
             self.pool = await asyncpg.create_pool(
-                self.db_url, min_size=2, max_size=20, command_timeout=COMMAND_TIMEOUT
+                self.db_url,
+                min_size=POOL_MIN_SIZE,
+                max_size=POOL_MAX_SIZE,
+                command_timeout=COMMAND_TIMEOUT,
             )
             self.http_client = httpx.AsyncClient(timeout=30.0)
             logger.info(f"PostgreSQL pool created: {self.db_url}")
@@ -150,7 +162,10 @@ class NahMemoryMCPServer:
         logger.warning(f"Pool is None — attempting lazy initialization with db_url={self.db_url!r}")
         try:
             self.pool = await asyncpg.create_pool(
-                self.db_url, min_size=2, max_size=20, command_timeout=COMMAND_TIMEOUT
+                self.db_url,
+                min_size=POOL_MIN_SIZE,
+                max_size=POOL_MAX_SIZE,
+                command_timeout=COMMAND_TIMEOUT,
             )
             logger.info(f"Lazy pool initialization succeeded: {self.db_url}")
         except Exception as e:
@@ -1791,9 +1806,15 @@ class NahMemoryMCPServer:
 class MCPHandler:
     """JSON-RPC handler for MCP protocol"""
 
-    def __init__(self, server: NahMemoryMCPServer, phase3: Optional[NahRememberPhase3] = None):
+    def __init__(
+        self,
+        server: NahMemoryMCPServer,
+        engine: Optional[NahRememberEngine] = None,
+        phase3: Optional[NahRememberEngine] = None,
+    ):
         self.server = server
-        self.phase3 = phase3
+        self.engine = engine or phase3
+        self.phase3 = self.engine
         self.tools = {
             # Session management
             "nah_session_start": self.server.session_start,
@@ -1846,10 +1867,10 @@ class MCPHandler:
             "entity_relate": self.server.relationship_add,
         }
 
-        # Register Phase 3 tools if available
-        if self.phase3:
-            add_phase3_tools_to_mcp(self.tools, self.phase3, self.server.generate_embedding)
-            logger.info("Phase 3 tools registered with MCP handler")
+        # Register Cognitive Engine tools if available
+        if self.engine:
+            add_engine_tools_to_mcp(self.tools, self.engine, self.server.generate_embedding)
+            logger.info("Cognitive Engine tools registered with MCP handler")
 
     def get_tools_list(self) -> List[Dict]:
         """Return MCP tools list for initialization"""
@@ -2655,16 +2676,16 @@ class MCPHandler:
 async def main():
     """Main entry point for MCP server"""
     server = NahMemoryMCPServer()
-    phase3 = None
+    engine = None
     try:
         await server.setup()
-        # Initialize Phase 3 with the same pool
-        phase3 = NahRememberPhase3(server.pool)
-        logger.info("Phase 3 initialized successfully")
+        # Initialize Cognitive Engine with the same pool
+        engine = NahRememberEngine(server.pool)
+        logger.info("NahRememberEngine initialized successfully")
     except Exception as e:
         logger.error(f"Server setup failed: {e}")
         # Continue anyway - server can handle some operations without full setup
-    handler = MCPHandler(server, phase3)
+    handler = MCPHandler(server, engine=engine)
 
     logger.info("NAH Memory Unified MCP Server started (stdio mode)")
 

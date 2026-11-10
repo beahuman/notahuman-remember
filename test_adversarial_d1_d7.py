@@ -9,6 +9,8 @@ from consolidation.wake_gate import evaluate_wake_gate, EXPECTED_PRODUCER
 from consolidation.dreamer_daemon import DreamerDaemon
 from consolidation.reflex import reflex, undo_reflex
 
+import pytest
+
 print("=== RE-ATTACK AUDIT: D1-D7 VERIFICATION ===")
 
 # --- D1 & D7: SPRT threshold & real observation scoring ---
@@ -53,6 +55,7 @@ print("✅ D4 VERIFIED: untrusted sources rejected, approved sources accepted")
 
 
 # --- D5: reflex() real DB write & rollback ---
+@pytest.mark.asyncio
 async def test_d5():
     conn = await asyncpg.connect("postgresql://human:@localhost/notahuman")
     row = await conn.fetchrow("SELECT id, success_rate FROM nah_remember.procedures LIMIT 1")
@@ -83,12 +86,10 @@ async def test_d5():
         )
         assert abs(restored_sr - orig_sr) < 1e-4, f"DB not restored: {restored_sr} != {orig_sr}"
     await conn.close()
+    print(
+        "✅ D5 VERIFIED: reflex executes asyncpg UPDATE and undo_reflex restores original weight in PostgreSQL"
+    )
 
-
-asyncio.run(test_d5())
-print(
-    "✅ D5 VERIFIED: reflex executes asyncpg UPDATE and undo_reflex restores original weight in PostgreSQL"
-)
 
 # --- D6: Blast radius enforcement ---
 cand_large = {"deltas": {f"proc-{i}": Decimal("0.1") for i in range(25)}}
@@ -125,3 +126,6 @@ print("✅ D2 VERIFIED: wake gate quarantines on regression and waits on inconcl
 print("======================================================")
 print("ALL 7 ADVERSARIAL DEFECTS (D1-D7) FULLY NEUTRALIZED")
 print("======================================================")
+
+if __name__ == "__main__":
+    asyncio.run(test_d5())

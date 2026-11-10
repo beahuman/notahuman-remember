@@ -30,4 +30,9 @@ include = ["consolidation*", "distillation*"]
 exclude = ["dashboard*", "logs*", "migrations*", "venv*", "tests*"]
 
 [tool.setuptools]
-py-modules = ["server", "nah_remember_phase3", "context_compaction", "promote_to_brain", "backfill_embeddings"]
+py-modules = ["server", "engine", "context_compaction", "promote_to_brain", "backfill_embeddings"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["."]
+python_files = ["test_*.py"]

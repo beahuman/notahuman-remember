@@ -23,7 +23,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SCHEMA = HERE / "setup_schema.sql"
 SERVER = HERE / "server.py"
-PHASE3 = HERE / "nah_remember_phase3.py"
+ENGINE = HERE / "engine.py"
+PHASE3 = ENGINE  # Backwards compatibility alias
 
 # The canonical embedding dimension for nah-remember. mistral-embed = 1024.
 EXPECTED_DIM = 1024

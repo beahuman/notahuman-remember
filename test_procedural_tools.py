@@ -13,7 +13,12 @@ import asyncpg
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from nah_remember_phase3 import NahRememberPhase3, add_phase3_tools_to_mcp
+from engine import (
+    NahRememberEngine,
+    add_engine_tools_to_mcp,
+    NahRememberPhase3,
+    add_phase3_tools_to_mcp,
+)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://human:@localhost/notahuman")
 
