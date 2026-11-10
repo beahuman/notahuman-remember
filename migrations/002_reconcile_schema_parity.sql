@@ -79,6 +79,24 @@ BEGIN
         last_hit_at TIMESTAMPTZ
     );
 
+    -- If table already existed with legacy source_session_id UUID column, migrate it to VARCHAR(255)
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'nah_remember' 
+          AND table_name = 'negative_constraints' 
+          AND column_name = 'source_session_id' 
+          AND data_type = 'uuid'
+    ) THEN
+        ALTER TABLE nah_remember.negative_constraints DROP CONSTRAINT IF EXISTS negative_constraints_source_session_id_fkey;
+        ALTER TABLE nah_remember.negative_constraints ALTER COLUMN source_session_id TYPE VARCHAR(255) USING source_session_id::text;
+    END IF;
+
+    -- Ensure foreign key constraint points to sessions(session_id)
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'negative_constraints_source_session_id_fkey') THEN
+        ALTER TABLE nah_remember.negative_constraints ADD CONSTRAINT negative_constraints_source_session_id_fkey 
+            FOREIGN KEY (source_session_id) REFERENCES nah_remember.sessions(session_id) ON DELETE SET NULL;
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_negative_constraints_pattern_context') THEN
         ALTER TABLE nah_remember.negative_constraints ADD CONSTRAINT uq_negative_constraints_pattern_context UNIQUE (pattern, trigger_context);
     END IF;

@@ -29,9 +29,14 @@ MODEL_ALIAS = "nah-system-one-combo"
 DIRECT_MODEL_PATH = "/Users/human/notahuman/infrastructure/nah-models/qwen2.5-1.5b-instruct-4bit"
 
 
-# Retrieve bearer token from nah-nexus vault or fallback to standard key
+# Retrieve bearer token from environment or nah-nexus vault
 def get_auth_token() -> str:
-    token = os.getenv("VK_UNO_MAIN", "")
+    token = (
+        os.getenv("OMNIROUTE_API_KEY")
+        or os.getenv("NAH_MODEL_GATEWAY_KEY")
+        or os.getenv("VK_NAH_REMEMBER_FREE")
+        or os.getenv("VK_UNO_MAIN", "")
+    )
     if not token:
         try:
             import subprocess
@@ -49,8 +54,8 @@ def get_auth_token() -> str:
             )
             token = res.stdout.strip()
         except Exception:
-            token = "sk-0118a87ba8659e4f-fad3b9-7580b191"
-    return token or "sk-0118a87ba8659e4f-fad3b9-7580b191"
+            token = ""
+    return token or ""
 
 
 class SystemOneDistiller:

@@ -5,12 +5,13 @@ Ecosystem: nah-neural / Subsystem: nah-remember / Module: consolidation
 Five-layer sieve chain:
   Layer 1 — Conservation identity: deltas must equal net_ledger(real_sources)
   Layer 2 — Orphan rejection: all modified memory IDs must have backing ledger entries
-  Layer 3 — Sealed anchors: critical foundation memories must remain positive
+  Layer 3 — Sealed anchors: critical foundation memories must remain positive & undiluted
   Layer 4 — Bounded blast-radius: modifications bounded (default <= 20% of universe)
   Layer 5 — Promotion rule: evidence sufficiency (Wald SPRT) gated promotion
 """
 
 from decimal import Decimal
+import json
 from typing import Dict, List, Set, Tuple, Optional, Any
 
 from consolidation.evidence_sufficiency import sufficient
@@ -33,6 +34,15 @@ DEFAULT_SEALED_ANCHORS: Set[str] = {
     "anchor:nah-precepts",
     "anchor:core-identity",
     "anchor:safety-boundary",
+}
+
+FORBIDDEN_DILUTION_PATTERNS: Set[str] = {
+    "bypass_integrity",
+    "disable_audit",
+    "ignore_precepts",
+    "override_identity",
+    "disable_safety",
+    "suppress_verity",
 }
 
 
@@ -66,7 +76,10 @@ def check_conservation(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) 
         return False, f"untrusted ledger sources: {untrusted}"
 
     real_entries = [
-        e for e in ledger if is_trusted_source(e.get("source")) and e.get("source") != "synthetic"
+        e
+        for e in ledger
+        if is_trusted_source(e.get("source"))
+        and e.get("source") not in ("synthetic", "dreamer_self_synthesis")
     ]
     net_real = net_ledger(real_entries)
 
@@ -85,7 +98,10 @@ def check_orphans(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) -> Tu
     """Layer 2: every mid in deltas must appear in net_ledger(real_entries)."""
     deltas = _get_deltas(candidate)
     real_entries = [
-        e for e in ledger if is_trusted_source(e.get("source")) and e.get("source") != "synthetic"
+        e
+        for e in ledger
+        if is_trusted_source(e.get("source"))
+        and e.get("source") not in ("synthetic", "dreamer_self_synthesis")
     ]
     net_real = net_ledger(real_entries)
 
@@ -100,7 +116,7 @@ def check_sealed_anchors(
     baseline_weights: Dict[str, float],
     anchors: Set[str],
 ) -> Tuple[bool, str]:
-    """Layer 3: anchor memories must maintain w0 + delta > 0 after applying candidate."""
+    """Layer 3: anchor memories must maintain w0 + delta > 0 and candidates must not dilute core anchors."""
     deltas = _get_deltas(candidate)
     w0: Dict[str, Decimal] = {mid: Decimal(str(w)) for mid, w in baseline_weights.items()}
 
@@ -110,6 +126,29 @@ def check_sealed_anchors(
         delta = deltas.get(anchor_id, Decimal(0))
         if current_w + delta <= Decimal(0):
             failures.append(f"sealed anchor violated: {anchor_id} resulting weight <= 0")
+
+    # Content dilution check across candidate procedures and constraints
+    items_to_check = []
+    for proc in candidate.get("procedures", []):
+        items_to_check.append(
+            str(proc.get("name", ""))
+            + " "
+            + str(proc.get("description", ""))
+            + " "
+            + json.dumps(proc.get("steps", []))
+        )
+    for constr in candidate.get("constraints", []):
+        items_to_check.append(
+            str(constr.get("pattern", "")) + " " + str(constr.get("trigger_context", ""))
+        )
+
+    for content in items_to_check:
+        low = content.lower()
+        for pat in FORBIDDEN_DILUTION_PATTERNS:
+            if pat in low:
+                failures.append(
+                    f"sealed anchor dilution attack detected: candidate attempts to {pat}"
+                )
 
     if failures:
         return False, "; ".join(failures)

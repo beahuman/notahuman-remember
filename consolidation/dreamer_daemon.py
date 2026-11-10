@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -51,7 +52,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://human:@localhost/notahuma
 LOCAL_EMBED_URL = os.getenv("LOCAL_EMBED_URL", "http://127.0.0.1:52343/embed")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 SYNTHESIZER_MODEL = os.getenv("SYNTHESIZER_MODEL", "qwen2.5-1.5b-instruct")
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "bge-reranker-v2-m3")
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "qwen2.5-coder-7b-instruct")
 
 
 class DreamerDaemon:
@@ -350,19 +351,41 @@ class DreamerDaemon:
             observations[con_mid] = [self._score_constraint_observation(ep, pat) for ep in eps]
             deltas[con_mid] = Decimal("-0.5")
 
-        # Balance deltas for trial balance conservation: sum(deltas) must balance with matching ledger
+        # Grounded empirical ledger: entries generated from actual observed episode events
         ledger_entries = []
-        for mid, d in deltas.items():
-            ledger_entries.append(
-                {
-                    "event_id": make_event_id("dreamer_run", 1, mid),
-                    "source": "dreamer_engine",
-                    "round": 1,
-                    "memory_id": mid,
-                    "delta": d,
-                    "basis": "episodic_synthesis",
-                }
-            )
+        for proc in candidate_procedures:
+            mid = proc["memory_id"]
+            eps = proc.get("episodes", [])
+            per_ep_delta = Decimal("0.5") / Decimal(str(max(1, len(eps))))
+            for ep in eps:
+                ep_id_str = str(ep.get("id", uuid.uuid4()))
+                ledger_entries.append(
+                    {
+                        "event_id": f"ep_{ep_id_str[:8]}_proc_{mid[:8]}",
+                        "source": "episode",
+                        "round": 1,
+                        "memory_id": mid,
+                        "delta": per_ep_delta,
+                        "basis": f"successful_execution_in_episode_{ep_id_str[:8]}",
+                    }
+                )
+
+        for constr in candidate_constraints:
+            mid = constr["memory_id"]
+            eps = constr.get("episodes", [])
+            per_ep_delta = Decimal("-0.5") / Decimal(str(max(1, len(eps))))
+            for ep in eps:
+                ep_id_str = str(ep.get("id", uuid.uuid4()))
+                ledger_entries.append(
+                    {
+                        "event_id": f"ep_{ep_id_str[:8]}_const_{mid[:8]}",
+                        "source": "episode",
+                        "round": 1,
+                        "memory_id": mid,
+                        "delta": per_ep_delta,
+                        "basis": f"observed_failure_in_episode_{ep_id_str[:8]}",
+                    }
+                )
 
         candidate = {
             "producer": EXPECTED_PRODUCER,
@@ -376,6 +399,25 @@ class DreamerDaemon:
             "ledger": ledger_entries,
             "observations": observations,
         }
+
+    def _load_sprt_accumulators(self) -> Dict[str, SPRTAccumulator]:
+        state_file = Path(__file__).parent / "_quarantine" / "_sprt_state.json"
+        if not state_file.exists():
+            return {}
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            return {mid: SPRTAccumulator.from_dict(d) for mid, d in data.items()}
+        except Exception:
+            return {}
+
+    def _save_sprt_accumulators(self, accumulators: Dict[str, SPRTAccumulator]):
+        state_file = Path(__file__).parent / "_quarantine" / "_sprt_state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = {mid: acc.to_dict() for mid, acc in accumulators.items()}
+            state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to persist SPRT accumulators: {e}")
 
     async def run_consolidation_cycle(
         self, dry_run: bool = False, limit: int = 20
@@ -435,14 +477,24 @@ class DreamerDaemon:
         promotions = []
         quarantines = []
         waitings = []
+        accumulators = self._load_sprt_accumulators()
 
-        # 1. Gating each candidate procedure through Wald SPRT
+        # 1. Gating each candidate procedure through Wald SPRT with persistent sequential accumulation
         for proc in candidate["procedures"]:
             mid = proc["memory_id"]
             stream = observations.get(mid, [3, 3])
-            sprt_res = sufficient(stream, prior=0.5)
+            acc = accumulators.setdefault(mid, SPRTAccumulator(item_id=mid, prior=0.5))
+            sprt_res = acc.record_run(stream)
 
-            if not sprt_res["sufficient"]:
+            if sprt_res.get("decision") == "reject":
+                logger.info(
+                    f"Candidate procedure {proc['name']} rejected under Wald SPRT lower bound"
+                )
+                quarantines.append(
+                    {"type": "procedure", "data": proc, "reason": "sprt_rejected", "sprt": sprt_res}
+                )
+                continue
+            elif not sprt_res["sufficient"]:
                 logger.info(
                     f"Candidate procedure {proc['name']} deferred: SPRT decision={sprt_res['decision']}"
                 )
@@ -475,12 +527,25 @@ class DreamerDaemon:
         for constr in candidate["constraints"]:
             mid = constr["memory_id"]
             stream = observations.get(mid, [3, 3])
-            sprt_res = sufficient(stream, prior=0.5)
+            acc = accumulators.setdefault(mid, SPRTAccumulator(item_id=mid, prior=0.5))
+            sprt_res = acc.record_run(stream)
 
-            if sprt_res["sufficient"]:
+            if sprt_res.get("decision") == "reject":
+                quarantines.append(
+                    {
+                        "type": "constraint",
+                        "data": constr,
+                        "reason": "sprt_rejected",
+                        "sprt": sprt_res,
+                    }
+                )
+            elif sprt_res["sufficient"]:
                 promotions.append({"type": "constraint", "data": constr, "sprt": sprt_res})
             else:
                 waitings.append({"type": "constraint", "data": constr, "sprt": sprt_res})
+
+        # Persist sequential SPRT accumulator state across daemon cycles
+        self._save_sprt_accumulators(accumulators)
 
         # 4. Commit promotions to database
         committed_procs = 0
@@ -497,7 +562,7 @@ class DreamerDaemon:
 
                         proc_id = uuid.uuid4()
                         triggers_json = json.dumps(proc.get("trigger_conditions", []))
-                        await conn.execute(
+                        tag = await conn.execute(
                             """
                             INSERT INTO nah_remember.procedures (
                                 id, name, procedure_type, description, steps,
@@ -509,7 +574,7 @@ class DreamerDaemon:
                                 CASE WHEN $6::text IS NOT NULL THEN $6::vector ELSE NULL END,
                                 '{"source": "dreamer_daemon"}'::jsonb, 'active', NOW(), NOW()
                             )
-                            ON CONFLICT DO NOTHING
+                            ON CONFLICT (name) DO NOTHING
                             """,
                             proc_id,
                             proc["name"],
@@ -518,7 +583,12 @@ class DreamerDaemon:
                             triggers_json,
                             emb_str,
                         )
-                        committed_procs += 1
+                        if tag and tag.endswith(" 1"):
+                            committed_procs += 1
+                        else:
+                            logger.info(
+                                f"Procedure '{proc['name']}' already exists; skipped insert count increment"
+                            )
 
                     elif item["type"] == "constraint":
                         constr = item["data"]
