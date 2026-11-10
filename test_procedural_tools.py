@@ -37,7 +37,7 @@ async def test_procedural_lifecycle():
             {"step": 3, "action": "verify_health", "tool": "curl"},
         ]
         triggers = ["deploy", "launch", "fastapi"]
-        dummy_embedding = [0.05] * 1024
+        unique_embedding = [0.88] + [0.01] * 1023
 
         proc_id = await phase3.save_procedure(
             name=proc_name,
@@ -45,7 +45,7 @@ async def test_procedural_lifecycle():
             steps=steps,
             trigger_conditions=triggers,
             procedure_type="workflow",
-            embedding=dummy_embedding,
+            embedding=unique_embedding,
             initial_success_rate=1.0,
             agent_id="astro",
             metadata={"environment": "production"},
@@ -96,7 +96,7 @@ async def test_procedural_lifecycle():
         print("✅ Execution 3 logged (Success -> 0.6667)")
 
         # 5. Query Procedural Layer directly
-        results = await phase3.query_procedural(dummy_embedding, limit=50)
+        results = await phase3.query_procedural(unique_embedding, limit=50)
         assert len(results) > 0
         found = any(r.memory_id == proc_id for r in results)
         assert found, f"Procedure {proc_id} not found in query results"
