@@ -829,6 +829,23 @@ class NahRememberEngine:
                         LIMIT $2
                     """
                     history_rows = await conn.fetch(history_query, ts_q, limit)
+
+                    nc_query = """
+                        SELECT
+                            'negative_constraint' as memory_type,
+                            nc.id::text as memory_id,
+                            nc.pattern || ' (Trigger: ' || nc.trigger_context || ')' as content,
+                            CASE WHEN nc.severity = 'critical' THEN 1.0 ELSE nc.weight END as importance_score,
+                            nc.hit_count as access_count,
+                            0.0 as reinforcement_score,
+                            nc.created_at,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', nc.trigger_context || ' ' || nc.pattern), to_tsquery('english', $1)) * 2.0) as similarity
+                        FROM nah_remember.negative_constraints nc
+                        WHERE to_tsvector('english', nc.trigger_context || ' ' || nc.pattern) @@ to_tsquery('english', $1)
+                        ORDER BY nc.weight DESC, similarity DESC
+                        LIMIT $2
+                    """
+                    nc_rows = await conn.fetch(nc_query, ts_q, limit)
                 else:
                     rel_query = """
                         SELECT
@@ -863,6 +880,22 @@ class NahRememberEngine:
                     """
                     history_rows = await conn.fetch(history_query, limit)
 
+                    nc_query = """
+                        SELECT
+                            'negative_constraint' as memory_type,
+                            nc.id::text as memory_id,
+                            nc.pattern || ' (Trigger: ' || nc.trigger_context || ')' as content,
+                            CASE WHEN nc.severity = 'critical' THEN 1.0 ELSE nc.weight END as importance_score,
+                            nc.hit_count as access_count,
+                            0.0 as reinforcement_score,
+                            nc.created_at,
+                            0.5 as similarity
+                        FROM nah_remember.negative_constraints nc
+                        ORDER BY nc.weight DESC, nc.hit_count DESC
+                        LIMIT $1
+                    """
+                    nc_rows = await conn.fetch(nc_query, limit)
+
             for r in rel_rows:
                 results.append(
                     RankedResult(
@@ -879,6 +912,21 @@ class NahRememberEngine:
                 )
 
             for r in history_rows:
+                results.append(
+                    RankedResult(
+                        memory_type=r["memory_type"],
+                        memory_id=r["memory_id"],
+                        content=r["content"] or "",
+                        layer=MemoryLayer.META,
+                        significance_score=r["importance_score"],
+                        access_count=r["access_count"],
+                        reinforcement_score=r["reinforcement_score"],
+                        created_at=r["created_at"],
+                        similarity=r["similarity"],
+                    )
+                )
+
+            for r in nc_rows:
                 results.append(
                     RankedResult(
                         memory_type=r["memory_type"],
