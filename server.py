@@ -118,14 +118,18 @@ class NahMemoryMCPServer:
                         trigger_context TEXT NOT NULL,
                         severity TEXT DEFAULT 'warning',
                         weight FLOAT DEFAULT 0.8,
-                        source_session_id UUID REFERENCES nah_remember.sessions(id),
+                        source_session_id VARCHAR(255) REFERENCES nah_remember.sessions(session_id) ON DELETE SET NULL,
                         created_at TIMESTAMPTZ DEFAULT NOW(),
                         hit_count INTEGER DEFAULT 0,
-                        last_hit_at TIMESTAMPTZ
+                        last_hit_at TIMESTAMPTZ,
+                        CONSTRAINT uq_negative_constraints_pattern_context UNIQUE (pattern, trigger_context)
                     );
                     CREATE INDEX IF NOT EXISTS idx_negative_constraints_context
                         ON nah_remember.negative_constraints
                         USING gin(to_tsvector('english', trigger_context));
+                    CREATE INDEX IF NOT EXISTS idx_negative_constraints_pattern
+                        ON nah_remember.negative_constraints
+                        USING gin(to_tsvector('english', pattern));
                 """)
                 logger.info("negative_constraints table ensured")
         except Exception as e:
@@ -1369,47 +1373,75 @@ class NahMemoryMCPServer:
 
     async def decay_memories(self, dry_run: bool = False) -> Dict:
         """Eviction and apoptosis — soft-delete stale memories, condense old episodes."""
-        results = {"soft_deleted": 0, "hard_deleted": 0, "condensed": 0, "errors": []}
+        results = {
+            "soft_deleted": 0,
+            "hard_deleted": 0,
+            "condensed": 0,
+            "errors": [],
+            "dry_run": dry_run,
+        }
         try:
             async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
-                soft = await conn.execute("""
-                    UPDATE nah_remember.semantic_memories
-                    SET archived = true, updated_at = NOW()
-                    WHERE (importance_score < 0.1 OR importance_score IS NULL)
-                      AND (reinforcement_score < 0.1 OR reinforcement_score IS NULL)
-                      AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '90 days')
-                      AND (archived IS NULL OR archived = false)
-                """)
-                if not dry_run:
-                    s = str(soft).split()[-1] if hasattr(soft, "split") else "0"
-                    results["soft_deleted"] = int(s) if s.isdigit() else 0
+                if dry_run:
+                    # Non-destructive counts only — zero mutations during dry-run
+                    soft_count = await conn.fetchval("""
+                        SELECT count(*) FROM nah_remember.semantic_memories
+                        WHERE (importance_score < 0.1 OR importance_score IS NULL)
+                          AND (reinforcement_score < 0.1 OR reinforcement_score IS NULL)
+                          AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '90 days')
+                          AND (archived IS NULL OR archived = false)
+                    """)
+                    hard_count = await conn.fetchval("""
+                        SELECT count(*) FROM nah_remember.semantic_memories
+                        WHERE (importance_score < 0.05 OR importance_score IS NULL)
+                          AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '180 days')
+                          AND archived = true
+                    """)
+                    cond_count = await conn.fetchval("""
+                        SELECT count(*) FROM nah_remember.context_snapshots
+                        WHERE created_at < NOW() - INTERVAL '90 days'
+                          AND (context_data->>'condensed' IS NULL OR context_data->>'condensed' != 'true')
+                    """)
+                    results["soft_deleted"] = soft_count or 0
+                    results["hard_deleted"] = hard_count or 0
+                    results["condensed"] = cond_count or 0
+                else:
+                    async with conn.transaction():
+                        soft = await conn.execute("""
+                            UPDATE nah_remember.semantic_memories
+                            SET archived = true, updated_at = NOW()
+                            WHERE (importance_score < 0.1 OR importance_score IS NULL)
+                              AND (reinforcement_score < 0.1 OR reinforcement_score IS NULL)
+                              AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '90 days')
+                              AND (archived IS NULL OR archived = false)
+                        """)
+                        s = str(soft).split()[-1] if hasattr(soft, "split") else "0"
+                        results["soft_deleted"] = int(s) if s.isdigit() else 0
 
-                hard = await conn.execute("""
-                    DELETE FROM nah_remember.semantic_memories
-                    WHERE (importance_score < 0.05 OR importance_score IS NULL)
-                      AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '180 days')
-                      AND archived = true
-                """)
-                if not dry_run:
-                    h = str(hard).split()[-1] if hasattr(hard, "split") else "0"
-                    results["hard_deleted"] = int(h) if h.isdigit() else 0
+                        hard = await conn.execute("""
+                            DELETE FROM nah_remember.semantic_memories
+                            WHERE (importance_score < 0.05 OR importance_score IS NULL)
+                              AND (last_accessed_at IS NULL OR last_accessed_at < NOW() - INTERVAL '180 days')
+                              AND archived = true
+                        """)
+                        h = str(hard).split()[-1] if hasattr(hard, "split") else "0"
+                        results["hard_deleted"] = int(h) if h.isdigit() else 0
 
-                cond = await conn.execute("""
-                    UPDATE nah_remember.context_snapshots
-                    SET context_data = jsonb_build_object(
-                        'condensed', true,
-                        'original', substring(context_data::text, 1, 500)
-                    )
-                    WHERE created_at < NOW() - INTERVAL '90 days'
-                      AND (context_data->>'condensed' IS NULL OR context_data->>'condensed' != 'true')
-                """)
-                if not dry_run:
-                    c = str(cond).split()[-1] if hasattr(cond, "split") else "0"
-                    results["condensed"] = int(c) if c.isdigit() else 0
+                        cond = await conn.execute("""
+                            UPDATE nah_remember.context_snapshots
+                            SET context_data = jsonb_build_object(
+                                'condensed', true,
+                                'original', substring(context_data::text, 1, 500)
+                            )
+                            WHERE created_at < NOW() - INTERVAL '90 days'
+                              AND (context_data->>'condensed' IS NULL OR context_data->>'condensed' != 'true')
+                        """)
+                        c = str(cond).split()[-1] if hasattr(cond, "split") else "0"
+                        results["condensed"] = int(c) if c.isdigit() else 0
 
             results["success"] = True
             logger.info(
-                f"Phase E: soft={results['soft_deleted']} hard={results['hard_deleted']} condensed={results['condensed']}"
+                f"Phase E decay (dry_run={dry_run}): soft={results['soft_deleted']} hard={results['hard_deleted']} condensed={results['condensed']}"
             )
         except Exception as e:
             logger.error(f"Phase E decay failed: {e}")

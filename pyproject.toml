@@ -7,6 +7,7 @@ name = "nah-remember"
 version = "0.2.0"
 description = "Unified MCP server for nah-remember (PostgreSQL + pgvector long-term memory)"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "asyncpg>=0.29.0",
