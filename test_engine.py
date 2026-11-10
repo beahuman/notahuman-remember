@@ -13,16 +13,21 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import asyncpg
-from nah_remember_phase3 import (
+import pytest
+from engine import (
+    NahRememberEngine,
     NahRememberPhase3,
     RankedResult,
     MemoryLayer,
+    add_engine_tools_to_mcp,
     add_phase3_tools_to_mcp,
 )
 
 
 class TestPhase3:
-    """Test suite for Phase 3"""
+    """Internal test runner for engine test cases"""
+
+    __test__ = False  # Instruct pytest not to instantiate this runner class directly
 
     def __init__(self):
         self.pool = None
@@ -34,7 +39,7 @@ class TestPhase3:
         try:
             db_url = os.getenv("DATABASE_URL", "postgresql://human:@localhost/notahuman")
             self.pool = await asyncpg.create_pool(db_url, min_size=1, max_size=5)
-            self.phase3 = NahRememberPhase3(self.pool)
+            self.phase3 = NahRememberEngine(self.pool)
             print(f"✅ Database connected: {db_url}")
             self.results.append(("Database Setup", True, "Connected"))
             return True
@@ -42,6 +47,11 @@ class TestPhase3:
             print(f"❌ Database setup failed: {e}")
             self.results.append(("Database Setup", False, str(e)))
             return False
+
+    async def teardown(self):
+        """Teardown database connection pool"""
+        if self.pool:
+            await self.pool.close()
 
     async def cleanup(self):
         """Cleanup connections"""
@@ -483,7 +493,98 @@ async def main():
     """Main entry point"""
     test = TestPhase3()
     success = await test.run_all_tests()
+    await test.teardown()
     sys.exit(0 if success else 1)
+
+
+# ==================== PYTEST INTEGRATION FIXTURES & TESTS ====================
+
+
+@pytest.fixture
+async def engine_runner():
+    runner = TestPhase3()
+    ok = await runner.setup()
+    assert ok, "Engine runner setup failed"
+    yield runner
+    await runner.teardown()
+
+
+@pytest.mark.asyncio
+async def test_ranked_result_scoring(engine_runner):
+    await engine_runner.test_ranked_result_scoring()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_ranked_result_dict_serialization(engine_runner):
+    await engine_runner.test_ranked_result_dict_serialization()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_query(engine_runner):
+    await engine_runner.test_ephemeral_query()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_episodic_query(engine_runner):
+    await engine_runner.test_episodic_query()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_semantic_query(engine_runner):
+    await engine_runner.test_semantic_query()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_meta_query(engine_runner):
+    await engine_runner.test_meta_query()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_remember_search_ranked_all_layers(engine_runner):
+    await engine_runner.test_remember_search_ranked_all_layers()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_remember_search_ranked_single_layer(engine_runner):
+    await engine_runner.test_remember_search_ranked_single_layer()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_ranking_consistency(engine_runner):
+    await engine_runner.test_ranking_consistency()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_weight_normalization(engine_runner):
+    await engine_runner.test_weight_normalization()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_episodic_lifecycle(engine_runner):
+    await engine_runner.test_episodic_lifecycle()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_procedural_query(engine_runner):
+    await engine_runner.test_procedural_query()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
+
+
+@pytest.mark.asyncio
+async def test_mcp_integration(engine_runner):
+    await engine_runner.test_mcp_integration()
+    assert engine_runner.results[-1][1], engine_runner.results[-1][2]
 
 
 if __name__ == "__main__":
