@@ -45,9 +45,10 @@ def test_sprt_evidence_sufficiency():
     assert res_success["decision"] == "act"
     assert res_success["sufficient"]
 
-    # Repeated failures (1, 1, 1) -> log_lr strongly negative -> decision: wait
+    # Repeated failures (1, 1, 1) -> log_lr strongly negative -> decision: reject under Wald SPRT lower bound
     res_fail = sufficient([1, 1, 1])
-    assert res_fail["decision"] == "wait"
+    assert res_fail["decision"] == "reject"
+    assert res_fail["rejected"]
     assert not res_fail["sufficient"]
 
     # Prior parameter properly integrated (R3)

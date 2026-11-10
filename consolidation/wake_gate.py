@@ -28,12 +28,14 @@ logger = logging.getLogger(__name__)
 
 EXPECTED_PRODUCER = "nah-neural.dreamer.propose/deterministic"
 DEFAULT_QUARANTINE_DIR = Path(__file__).parent / "_quarantine"
+DEFAULT_JUDGE_MODEL = "qwen2.5-coder-7b-instruct"
+DEFAULT_SYNTHESIZER_MODEL = "qwen2.5-1.5b-instruct"
 
 
 async def neural_judge_probe(
     candidate: Dict[str, Any],
     probe_prompt: str,
-    judge_model: str = "astro-primary",
+    judge_model: str = DEFAULT_JUDGE_MODEL,
     omniroute_url: str = "http://localhost:20128/v1/chat/completions",
     api_key: Optional[str] = None,
     timeout: float = 5.0,
@@ -42,8 +44,19 @@ async def neural_judge_probe(
     Execute neural judge probe against candidate consolidation item.
     Queries OmniRoute live LLM gateway with structured evaluation prompt.
     Returns normalized score in [0.0, 1.0].
+    Fails closed (0.0) on error, missing key, or timeout.
     """
-    token = api_key or os.getenv("OMNIROUTE_API_KEY") or "sk-0118a87ba8659e4f-fad3b9-7580b191"
+    token = (
+        api_key
+        or os.getenv("OMNIROUTE_API_KEY")
+        or os.getenv("NAH_MODEL_GATEWAY_KEY")
+        or os.getenv("VK_NAH_REMEMBER_FREE")
+        or ""
+    )
+    if not token:
+        logger.warning("Neural judge probe: no API key configured; failing closed to 0.0")
+        return 0.0
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -79,23 +92,23 @@ async def neural_judge_probe(
                 end = content.rfind("}")
                 if start != -1 and end != -1:
                     parsed = json.loads(content[start : end + 1])
-                    val = float(parsed.get("score", 3))
+                    val = float(parsed.get("score", 0))
                     return max(0.0, min(1.0, (val - 1.0) / 4.0))
             except Exception:
                 pass
             for ch in content:
                 if ch in "12345":
                     return max(0.0, min(1.0, (float(ch) - 1.0) / 4.0))
-            return 0.5
+            return 0.0
 
     try:
         score = await asyncio.to_thread(_query_omniroute)
         return score
     except Exception as e:
         logger.warning(
-            f"Neural judge probe to OmniRoute failed ({e}); falling back to heuristic evaluation"
+            f"Neural judge probe to OmniRoute failed ({e}); failing closed to 0.0 quarantine"
         )
-        return 0.75 if candidate.get("steps") or candidate.get("pattern") else 0.5
+        return 0.0
 
 
 def write_quarantine(
@@ -140,8 +153,8 @@ def evaluate_wake_gate(
     ledger: List[Dict[str, Any]],
     baseline_scores: List[float],
     candidate_scores: List[float],
-    synthesizer_model: str = "qwen2.5-1.5b-instruct",
-    judge_model: str = "bge-reranker-v2-m3",
+    synthesizer_model: str = DEFAULT_SYNTHESIZER_MODEL,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
     baseline_weights: Optional[Dict[str, float]] = None,
     sealed_anchors: Optional[set] = None,
     universe_size: int = 100,
@@ -189,9 +202,11 @@ def evaluate_wake_gate(
     ]
     sprt = sufficient(discretized)
 
-    # 5. Check performance regression
-    if post_avg < prior_avg:
-        reasons = [f"performance regression: post ({post_avg:.3f}) < prior ({prior_avg:.3f})"]
+    # 5. Check performance regression or zero/dead probe score
+    if post_avg <= 0.0 or post_avg < prior_avg:
+        reasons = [
+            f"candidate probe score regression/failure: post ({post_avg:.3f}) <= prior ({prior_avg:.3f})"
+        ]
         q_path = write_quarantine(
             candidate, reasons, prior_avg, post_avg, quarantine_dir=quarantine_dir
         )
@@ -205,7 +220,25 @@ def evaluate_wake_gate(
             "trial_balance": tb,
         }
 
-    # 6. Check SPRT evidence sufficiency (Fix for Blocking Defect R1)
+    # 6. Check SPRT rejection (lower bound hit)
+    if sprt.get("decision") == "reject":
+        reasons = [
+            f"candidate rejected under Wald SPRT lower boundary: log_lr={sprt['log_lr']:.3f} <= threshold={sprt['threshold_wait']:.3f}"
+        ]
+        q_path = write_quarantine(
+            candidate, reasons, prior_avg, post_avg, quarantine_dir=quarantine_dir
+        )
+        return {
+            "verdict": "quarantine",
+            "reason": reasons[0],
+            "quarantine_path": str(q_path),
+            "prior_score": prior_avg,
+            "post_score": post_avg,
+            "sprt": sprt,
+            "trial_balance": tb,
+        }
+
+    # 7. Check SPRT evidence sufficiency (Fix for Blocking Defect R1)
     if not sprt.get("sufficient", False):
         return {
             "verdict": "wait",

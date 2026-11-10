@@ -17,13 +17,15 @@ print("=== RE-ATTACK AUDIT: D1-D7 VERIFICATION ===")
 res_single_5 = sufficient([5])
 assert res_single_5["decision"] == "wait", f"Single r=5 should wait: {res_single_5}"
 res_all_1 = sufficient([1, 1, 1])
-assert res_all_1["decision"] == "wait", f"All 1s should wait: {res_all_1}"
+assert res_all_1["decision"] == "reject", (
+    f"All 1s should reject under Wald lower bound: {res_all_1}"
+)
 res_mixed = sufficient([3, 3])
 assert res_mixed["decision"] == "wait", f"Neutral [3, 3] should wait: {res_mixed}"
 res_strong = sufficient([5, 5])
 assert res_strong["decision"] == "act", f"Strong [5, 5] should act: {res_strong}"
 print(
-    "✅ D1 & D7 VERIFIED: single r=5 waits, all-1s waits, neutral [3,3] waits, confirmed [5,5] acts"
+    "✅ D1 & D7 VERIFIED: single r=5 waits, all-1s rejects under Wald bound, neutral [3,3] waits, confirmed [5,5] acts"
 )
 
 # --- D3: Deterministic SHA-256 for constraint IDs ---
