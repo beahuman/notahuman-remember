@@ -927,6 +927,35 @@ class NahMemoryMCPServer:
                     agent_id or user_id,
                 )
 
+                # Dual-insert negative constraints if tagged or categorized as such
+                if (
+                    category == "negative_constraint"
+                    or memory_type == "negative_constraint"
+                    or "negative_constraint" in tags_arr
+                ):
+                    try:
+                        nc_pattern = content.replace("NEGATIVE CONSTRAINT: ", "").strip()
+                        nc_context = (
+                            ", ".join([t for t in tags_arr if t != "negative_constraint"])
+                            if tags_arr
+                            else (category or "general")
+                        )
+                        await conn.execute(
+                            """
+                            INSERT INTO nah_remember.negative_constraints
+                            (pattern, trigger_context, severity, weight)
+                            VALUES ($1, $2, 'critical', 1.0)
+                            ON CONFLICT (pattern, trigger_context)
+                            DO UPDATE SET hit_count = nah_remember.negative_constraints.hit_count + 1, last_hit_at = NOW()
+                        """,
+                            nc_pattern,
+                            nc_context or "general",
+                        )
+                    except Exception as nc_err:
+                        logger.warning(
+                            f"Dual-insert into negative_constraints failed (non-blocking): {nc_err}"
+                        )
+
             logger.info(f"Semantic memory added: {result['id']}")
             return {
                 "success": True,
@@ -1220,7 +1249,14 @@ class NahMemoryMCPServer:
         """Search across all memory types"""
         try:
             if memory_types is None:
-                memory_types = ["messages", "entities", "semantic", "procedures"]
+                memory_types = [
+                    "messages",
+                    "entities",
+                    "semantic",
+                    "procedures",
+                    "episodes",
+                    "negative_constraints",
+                ]
 
             embedding = await self.generate_embedding(query)
             if not embedding:
@@ -1315,6 +1351,39 @@ class NahMemoryMCPServer:
                         )
                     )
 
+                if "episodes" in memory_types:
+                    ep_sql = """
+                        SELECT
+                            'episodes' as memory_type,
+                            id::text as id,
+                            COALESCE(title || ': ' || goal || ' - ' || COALESCE(narrative, ''), title) as content,
+                            CASE WHEN embedding IS NOT NULL THEN (1 - (embedding <=> $1::vector))::float ELSE 0.5 END as similarity,
+                            metadata,
+                            created_at
+                        FROM nah_remember.episodes
+                        WHERE (embedding IS NOT NULL AND (1 - (embedding <=> $1::vector)) > 0.1)
+                           OR (tsv @@ plainto_tsquery('english', $3))
+                        ORDER BY similarity DESC
+                        LIMIT $2
+                    """
+                    results.extend(await conn.fetch(ep_sql, embedding_str, limit_per_type, query))
+
+                if "negative_constraints" in memory_types:
+                    nc_sql = """
+                        SELECT
+                            'negative_constraints' as memory_type,
+                            id::text as id,
+                            pattern || ' (Trigger: ' || trigger_context || ')' as content,
+                            CASE WHEN to_tsvector('english', trigger_context || ' ' || pattern) @@ plainto_tsquery('english', $1) THEN 0.95 ELSE 0.6 END as similarity,
+                            jsonb_build_object('severity', severity, 'weight', weight, 'hit_count', hit_count) as metadata,
+                            created_at
+                        FROM nah_remember.negative_constraints
+                        WHERE to_tsvector('english', trigger_context || ' ' || pattern) @@ plainto_tsquery('english', $1)
+                        ORDER BY weight DESC, hit_count DESC
+                        LIMIT $2
+                    """
+                    results.extend(await conn.fetch(nc_sql, query, limit_per_type))
+
             return {
                 "success": True,
                 "query": query,
@@ -1385,6 +1454,51 @@ class NahMemoryMCPServer:
         except Exception as e:
             logger.error(f"negative_search failed: {e}")
             return {"success": False, "error": str(e), "constraints": [], "count": 0}
+
+    async def negative_constraint_add(
+        self,
+        pattern: str,
+        trigger_context: str,
+        severity: str = "warning",
+        weight: float = 0.8,
+        source_session_id: Optional[str] = None,
+    ) -> Dict:
+        """Add or update a negative constraint / failure invariant."""
+        try:
+            query = """
+                INSERT INTO nah_remember.negative_constraints
+                (pattern, trigger_context, severity, weight, source_session_id)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (pattern, trigger_context)
+                DO UPDATE SET
+                    hit_count = nah_remember.negative_constraints.hit_count + 1,
+                    last_hit_at = NOW(),
+                    severity = EXCLUDED.severity,
+                    weight = EXCLUDED.weight
+                RETURNING id, pattern, trigger_context, severity, weight, hit_count, created_at
+            """
+            async with self.pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT) as conn:
+                row = await conn.fetchrow(
+                    query,
+                    pattern,
+                    trigger_context,
+                    severity,
+                    weight,
+                    source_session_id,
+                )
+            return {
+                "success": True,
+                "id": str(row["id"]),
+                "pattern": row["pattern"],
+                "trigger_context": row["trigger_context"],
+                "severity": row["severity"],
+                "weight": float(row["weight"]),
+                "hit_count": row["hit_count"],
+                "created_at": row["created_at"].isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"negative_constraint_add failed: {e}")
+            return {"success": False, "error": str(e)}
 
     async def decay_memories(self, dry_run: bool = False) -> Dict:
         """Eviction and apoptosis — soft-delete stale memories, condense old episodes."""
@@ -1845,6 +1959,8 @@ class MCPHandler:
             "nah_stats": self.server.get_stats,
             # Negative constraints (Phase C)
             "nah_remember_negative_search": self.server.negative_search,
+            "nah_negative_constraint_add": self.server.negative_constraint_add,
+            "nah_remember_negative_add": self.server.negative_constraint_add,
             # Coherence check (Phase 3)
             "nah_coherence_check": self.server.coherence_check,
             # Phase E: Memory decay / eviction
@@ -2281,6 +2397,41 @@ class MCPHandler:
                         },
                     },
                     "required": ["query"],
+                },
+            },
+            {
+                "name": "nah_negative_constraint_add",
+                "description": (
+                    "Add or record a negative constraint / failure invariant. "
+                    "Use to record hard prohibitions, fatal error patterns, or rules "
+                    "that MUST NOT be violated across future agent sessions."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Prohibited pattern or failure description (e.g. 'Never assume Omo runs on OpenCode')",
+                        },
+                        "trigger_context": {
+                            "type": "string",
+                            "description": "Trigger keywords/context when this prohibition applies (e.g. 'agent roster, omo platform')",
+                        },
+                        "severity": {
+                            "type": "string",
+                            "enum": ["warning", "high", "critical"],
+                            "description": "Severity level (default: warning)",
+                        },
+                        "weight": {
+                            "type": "number",
+                            "description": "Avoidance weight 0.0 to 1.0 (default 0.8)",
+                        },
+                        "source_session_id": {
+                            "type": "string",
+                            "description": "Optional session ID where failure occurred",
+                        },
+                    },
+                    "required": ["pattern", "trigger_context"],
                 },
             },
             {

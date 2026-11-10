@@ -327,7 +327,7 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION nah_remember.search_all_memories(
     p_embedding vector(1024),
     p_limit_per_type INTEGER DEFAULT 5,
-    p_memory_types TEXT[] DEFAULT ARRAY['messages', 'entities', 'semantic', 'procedures', 'episodes']
+    p_memory_types TEXT[] DEFAULT ARRAY['messages', 'entities', 'semantic', 'procedures', 'episodes', 'negative_constraints']
 )
 RETURNS TABLE (
     memory_type TEXT,
@@ -386,6 +386,15 @@ BEGIN
     FROM nah_remember.episodes ep
     WHERE 'episodes' = ANY(p_memory_types) AND ep.embedding IS NOT NULL
     ORDER BY ep.embedding <=> p_embedding
+    LIMIT p_limit_per_type)
+
+    UNION ALL
+
+    -- Search negative constraints
+    (SELECT 'negative_constraints'::TEXT, nc.id::TEXT, nc.pattern || ' (Trigger: ' || nc.trigger_context || ')',
+           0.9::FLOAT, jsonb_build_object('severity', nc.severity, 'weight', nc.weight)::JSONB, nc.created_at
+    FROM nah_remember.negative_constraints nc
+    WHERE 'negative_constraints' = ANY(p_memory_types)
     LIMIT p_limit_per_type);
 END;
 $$ LANGUAGE plpgsql;
