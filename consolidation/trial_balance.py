@@ -26,7 +26,27 @@ VALID_SOURCES: Set[str] = {
     "dreamer_engine",
     "user_explicit",
     "sieve_balance",
+    "real_run",
 }
+
+DEFAULT_SEALED_ANCHORS: Set[str] = {
+    "anchor:nah-precepts",
+    "anchor:core-identity",
+    "anchor:safety-boundary",
+}
+
+
+def is_trusted_source(source: Optional[str]) -> bool:
+    """Validate ledger entry source with prefix/canonical support (fail-closed)."""
+    if not source or not isinstance(source, str):
+        return False
+    if source == "synthetic":
+        return True
+    if source in VALID_SOURCES:
+        return True
+    # Support prefixed sources e.g. session-1, session:uuid, episode-123
+    prefix = source.split("-")[0].split(":")[0]
+    return prefix in VALID_SOURCES
 
 
 def _get_deltas(candidate: Dict[str, Any]) -> Dict[str, Decimal]:
@@ -41,15 +61,13 @@ def check_conservation(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) 
     deltas = _get_deltas(candidate)
 
     # Fail-closed validation of ledger sources (D4 fix)
-    untrusted = [
-        e.get("source")
-        for e in ledger
-        if e.get("source") not in VALID_SOURCES and e.get("source") != "synthetic"
-    ]
+    untrusted = [e.get("source") for e in ledger if not is_trusted_source(e.get("source"))]
     if untrusted:
         return False, f"untrusted ledger sources: {untrusted}"
 
-    real_entries = [e for e in ledger if e.get("source") in VALID_SOURCES]
+    real_entries = [
+        e for e in ledger if is_trusted_source(e.get("source")) and e.get("source") != "synthetic"
+    ]
     net_real = net_ledger(real_entries)
 
     failures = []
@@ -66,7 +84,9 @@ def check_conservation(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) 
 def check_orphans(candidate: Dict[str, Any], ledger: List[Dict[str, Any]]) -> Tuple[bool, str]:
     """Layer 2: every mid in deltas must appear in net_ledger(real_entries)."""
     deltas = _get_deltas(candidate)
-    real_entries = [e for e in ledger if e.get("source") in VALID_SOURCES]
+    real_entries = [
+        e for e in ledger if is_trusted_source(e.get("source")) and e.get("source") != "synthetic"
+    ]
     net_real = net_ledger(real_entries)
 
     orphans = [mid for mid in deltas if mid not in net_real]

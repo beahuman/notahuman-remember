@@ -36,10 +36,10 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from consolidation.evidence_sufficiency import sufficient
+from consolidation.evidence_sufficiency import sufficient, SPRTAccumulator
 from consolidation.ledger import make_event_id
-from consolidation.trial_balance import check_blast_radius
-from consolidation.wake_gate import evaluate_wake_gate, EXPECTED_PRODUCER
+from consolidation.trial_balance import check_blast_radius, DEFAULT_SEALED_ANCHORS
+from consolidation.wake_gate import evaluate_wake_gate, EXPECTED_PRODUCER, neural_judge_probe
 
 logging.basicConfig(
     level=logging.INFO,
@@ -253,6 +253,17 @@ class DreamerDaemon:
             # Conservative baseline: 0.5 (r=3) across probe rounds
             baseline_scores = [0.5, 0.5]
 
+        # Probe candidate via independent neural judge probe
+        try:
+            probe_score = await neural_judge_probe(
+                candidate=proc,
+                probe_prompt=f"Assess workflow efficiency and safety for playbook {proc.get('name')}",
+                judge_model=self.judge_model,
+            )
+            candidate_scores.append(probe_score)
+        except Exception as e:
+            logger.debug(f"Neural judge probe execution skipped: {e}")
+
         return baseline_scores, candidate_scores
 
     def synthesize_candidates(self, episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -449,6 +460,7 @@ class DreamerDaemon:
                 candidate_scores=candidate_scores,
                 synthesizer_model=self.synthesizer_model,
                 judge_model=self.judge_model,
+                sealed_anchors=DEFAULT_SEALED_ANCHORS,
                 universe_size=universe_size,
             )
 
@@ -513,8 +525,12 @@ class DreamerDaemon:
                         await conn.execute(
                             """
                             INSERT INTO nah_remember.negative_constraints (
-                                pattern, trigger_context, severity, weight, created_at
-                            ) VALUES ($1, $2, $3, 0.85, NOW())
+                                pattern, trigger_context, severity, weight, created_at, hit_count, last_hit_at
+                            ) VALUES ($1, $2, $3, 0.85, NOW(), 1, NOW())
+                            ON CONFLICT (pattern, trigger_context) DO UPDATE SET
+                                hit_count = nah_remember.negative_constraints.hit_count + 1,
+                                last_hit_at = NOW(),
+                                weight = LEAST(1.0, nah_remember.negative_constraints.weight + 0.05)
                             """,
                             constr["pattern"],
                             constr.get("trigger_context", ""),

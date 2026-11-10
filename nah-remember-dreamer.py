@@ -80,7 +80,7 @@ class DreamingPipeline:
                 FROM nah_remember.sessions s
                 LEFT JOIN nah_remember.context_snapshots cs
                     ON cs.session_id = s.session_id
-                WHERE s.status = 'completed'
+                WHERE s.status IN ('completed', 'ended')
                   AND s.ended_at IS NOT NULL
                 ORDER BY s.ended_at DESC
                 LIMIT $1

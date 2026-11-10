@@ -16,6 +16,7 @@ Ranking formula (Bet 2 Hybrid + Situational Affinity):
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Literal
 from enum import Enum
@@ -211,39 +212,95 @@ class NahRememberPhase3:
             score += max(0.0, 1.0 - delta) * 0.15
         return min(1.0, max(0.0, score))
 
+    @staticmethod
+    def _prepare_tsquery(query_text: Optional[str]) -> Optional[str]:
+        """Convert natural language query to an OR-combined full text tsquery."""
+        if not query_text or not isinstance(query_text, str):
+            return None
+        cleaned = re.sub(r"[^\w\s]", " ", query_text)
+        words = [w.strip() for w in cleaned.split() if len(w.strip()) > 0]
+        if not words:
+            return None
+        return " | ".join(words)
+
     # ==================== LAYER QUERIES ====================
 
     async def query_ephemeral(
         self,
-        query_embedding: List[float],
+        query_embedding: Optional[List[float]] = None,
+        query_text: Optional[str] = None,
         embedding_dim: int = EMBEDDING_DIM,
         hours: int = DEFAULT_EPHEMERAL_HOURS,
         limit: int = 10,
     ) -> List[RankedResult]:
-        """Query ephemeral layer: recent messages (< hours old, default 48h)"""
+        """Query ephemeral layer: recent messages (< hours old, default 48h) via hybrid vector + tsvector."""
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-            embedding_str = self._format_vector(query_embedding, embedding_dim)
-
-            query = """
-                SELECT
-                    'message' as memory_type,
-                    m.message_id::text as memory_id,
-                    m.content,
-                    m.importance_score,
-                    0 as access_count,
-                    0.0 as reinforcement_score,
-                    m.created_at,
-                    1 - (m.embedding <=> $1::vector) as similarity
-                FROM nah_remember.messages m
-                WHERE m.created_at > $2
-                    AND m.embedding IS NOT NULL
-                ORDER BY m.embedding <=> $1::vector
-                LIMIT $3
-            """
+            embedding_str = (
+                self._format_vector(query_embedding, embedding_dim) if query_embedding else None
+            )
+            ts_q = self._prepare_tsquery(query_text)
 
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch(query, embedding_str, cutoff, limit)
+                if embedding_str and ts_q:
+                    query = """
+                        SELECT
+                            'message' as memory_type,
+                            m.message_id::text as memory_id,
+                            m.content,
+                            coalesce(m.importance_score, 0.5) as importance_score,
+                            0 as access_count,
+                            0.0 as reinforcement_score,
+                            m.created_at,
+                            (
+                                (CASE WHEN m.embedding IS NOT NULL THEN (1 - (m.embedding <=> $1::vector)) ELSE 0.0 END) * 0.6 +
+                                LEAST(1.0, ts_rank_cd(to_tsvector('english', m.content), to_tsquery('english', $3)) * 2.0) * 0.4
+                            ) as similarity
+                        FROM nah_remember.messages m
+                        WHERE m.created_at > $2
+                          AND (m.embedding IS NOT NULL OR to_tsvector('english', m.content) @@ to_tsquery('english', $3))
+                        ORDER BY similarity DESC
+                        LIMIT $4
+                    """
+                    rows = await conn.fetch(query, embedding_str, cutoff, ts_q, limit)
+                elif embedding_str:
+                    query = """
+                        SELECT
+                            'message' as memory_type,
+                            m.message_id::text as memory_id,
+                            m.content,
+                            coalesce(m.importance_score, 0.5) as importance_score,
+                            0 as access_count,
+                            0.0 as reinforcement_score,
+                            m.created_at,
+                            (1 - (m.embedding <=> $1::vector)) as similarity
+                        FROM nah_remember.messages m
+                        WHERE m.created_at > $2
+                            AND m.embedding IS NOT NULL
+                        ORDER BY m.embedding <=> $1::vector
+                        LIMIT $3
+                    """
+                    rows = await conn.fetch(query, embedding_str, cutoff, limit)
+                elif ts_q:
+                    query = """
+                        SELECT
+                            'message' as memory_type,
+                            m.message_id::text as memory_id,
+                            m.content,
+                            coalesce(m.importance_score, 0.5) as importance_score,
+                            0 as access_count,
+                            0.0 as reinforcement_score,
+                            m.created_at,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', m.content), to_tsquery('english', $1)) * 2.0) as similarity
+                        FROM nah_remember.messages m
+                        WHERE m.created_at > $2
+                            AND to_tsvector('english', m.content) @@ to_tsquery('english', $1)
+                        ORDER BY similarity DESC
+                        LIMIT $3
+                    """
+                    rows = await conn.fetch(query, ts_q, cutoff, limit)
+                else:
+                    return []
 
             return [
                 RankedResult(
@@ -265,7 +322,8 @@ class NahRememberPhase3:
 
     async def query_episodic(
         self,
-        query_embedding: List[float],
+        query_embedding: Optional[List[float]] = None,
+        query_text: Optional[str] = None,
         embedding_dim: int = EMBEDDING_DIM,
         task_type: Optional[str] = None,
         hunt_context: Optional[str] = None,
@@ -273,43 +331,105 @@ class NahRememberPhase3:
         pressure: Optional[float] = None,
         limit: int = 10,
     ) -> List[RankedResult]:
-        """Query episodic layer: true episodes with situational affinity matching"""
+        """Query episodic layer: true episodes with situational affinity matching & hybrid search"""
         results = []
         try:
-            embedding_str = self._format_vector(query_embedding, embedding_dim)
+            embedding_str = (
+                self._format_vector(query_embedding, embedding_dim) if query_embedding else None
+            )
+            ts_q = self._prepare_tsquery(query_text)
 
             async with self.pool.acquire() as conn:
                 # 1. Query true episodes
-                episode_query = """
-                    SELECT
-                        'episode' as memory_type,
-                        e.id::text as memory_id,
-                        coalesce(e.narrative, e.title || ': ' || e.goal) as content,
-                        0.8 as importance_score,
-                        e.access_count,
-                        coalesce(e.reinforcement_score, 0.0) as reinforcement_score,
-                        e.created_at,
-                        e.task_type,
-                        e.hunt_context,
-                        e.agent_id,
-                        e.pressure,
-                        e.outcome,
-                        CASE 
-                            WHEN e.embedding IS NOT NULL THEN (1 - (e.embedding <=> $1::vector))
-                            ELSE 0.5 
-                        END as similarity
-                    FROM nah_remember.episodes e
-                    WHERE ($3::text IS NULL OR e.task_type = $3)
-                      AND ($4::text IS NULL OR e.agent_id = $4)
-                      AND ($5::text IS NULL OR e.hunt_context = $5)
-                    ORDER BY 
-                        CASE WHEN e.embedding IS NOT NULL THEN (e.embedding <=> $1::vector) ELSE 1.0 END ASC,
-                        e.created_at DESC
-                    LIMIT $2
-                """
-                episode_rows = await conn.fetch(
-                    episode_query, embedding_str, limit, task_type, agent_id, hunt_context
-                )
+                if embedding_str and ts_q:
+                    episode_query = """
+                        SELECT
+                            'episode' as memory_type,
+                            e.id::text as memory_id,
+                            coalesce(e.narrative, e.title || ': ' || e.goal) as content,
+                            0.8 as importance_score,
+                            coalesce(e.access_count, 0) as access_count,
+                            coalesce(e.reinforcement_score, 0.0) as reinforcement_score,
+                            e.created_at,
+                            e.task_type,
+                            e.hunt_context,
+                            e.agent_id,
+                            e.pressure,
+                            e.outcome,
+                            (
+                                (CASE WHEN e.embedding IS NOT NULL THEN (1 - (e.embedding <=> $1::vector)) ELSE 0.5 END) * 0.6 +
+                                LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(e.narrative, '') || ' ' || e.title || ' ' || e.goal), to_tsquery('english', $2)) * 2.0) * 0.4
+                            ) as similarity
+                        FROM nah_remember.episodes e
+                        WHERE ($4::text IS NULL OR e.task_type = $4)
+                          AND ($5::text IS NULL OR e.agent_id = $5)
+                          AND ($6::text IS NULL OR e.hunt_context = $6)
+                        ORDER BY similarity DESC, e.created_at DESC
+                        LIMIT $3
+                    """
+                    episode_rows = await conn.fetch(
+                        episode_query, embedding_str, ts_q, limit, task_type, agent_id, hunt_context
+                    )
+                elif embedding_str:
+                    episode_query = """
+                        SELECT
+                            'episode' as memory_type,
+                            e.id::text as memory_id,
+                            coalesce(e.narrative, e.title || ': ' || e.goal) as content,
+                            0.8 as importance_score,
+                            coalesce(e.access_count, 0) as access_count,
+                            coalesce(e.reinforcement_score, 0.0) as reinforcement_score,
+                            e.created_at,
+                            e.task_type,
+                            e.hunt_context,
+                            e.agent_id,
+                            e.pressure,
+                            e.outcome,
+                            CASE 
+                                WHEN e.embedding IS NOT NULL THEN (1 - (e.embedding <=> $1::vector))
+                                ELSE 0.5 
+                            END as similarity
+                        FROM nah_remember.episodes e
+                        WHERE ($3::text IS NULL OR e.task_type = $3)
+                          AND ($4::text IS NULL OR e.agent_id = $4)
+                          AND ($5::text IS NULL OR e.hunt_context = $5)
+                        ORDER BY 
+                            CASE WHEN e.embedding IS NOT NULL THEN (e.embedding <=> $1::vector) ELSE 1.0 END ASC,
+                            e.created_at DESC
+                        LIMIT $2
+                    """
+                    episode_rows = await conn.fetch(
+                        episode_query, embedding_str, limit, task_type, agent_id, hunt_context
+                    )
+                elif ts_q:
+                    episode_query = """
+                        SELECT
+                            'episode' as memory_type,
+                            e.id::text as memory_id,
+                            coalesce(e.narrative, e.title || ': ' || e.goal) as content,
+                            0.8 as importance_score,
+                            coalesce(e.access_count, 0) as access_count,
+                            coalesce(e.reinforcement_score, 0.0) as reinforcement_score,
+                            e.created_at,
+                            e.task_type,
+                            e.hunt_context,
+                            e.agent_id,
+                            e.pressure,
+                            e.outcome,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(e.narrative, '') || ' ' || e.title || ' ' || e.goal), to_tsquery('english', $1)) * 2.0) as similarity
+                        FROM nah_remember.episodes e
+                        WHERE ($3::text IS NULL OR e.task_type = $3)
+                          AND ($4::text IS NULL OR e.agent_id = $4)
+                          AND ($5::text IS NULL OR e.hunt_context = $5)
+                          AND to_tsvector('english', coalesce(e.narrative, '') || ' ' || e.title || ' ' || e.goal) @@ to_tsquery('english', $1)
+                        ORDER BY similarity DESC, e.created_at DESC
+                        LIMIT $2
+                    """
+                    episode_rows = await conn.fetch(
+                        episode_query, ts_q, limit, task_type, agent_id, hunt_context
+                    )
+                else:
+                    episode_rows = []
 
                 for r in episode_rows:
                     affinity = self.calculate_situational_affinity(
@@ -341,21 +461,42 @@ class NahRememberPhase3:
                 # 2. Context snapshots as situational context fallback
                 if len(results) < limit:
                     remaining = limit - len(results)
-                    snapshot_query = """
-                        SELECT
-                            'context_snapshot' as memory_type,
-                            cs.id::text as memory_id,
-                            cs.context_summary as content,
-                            0.6 as importance_score,
-                            0 as access_count,
-                            0.0 as reinforcement_score,
-                            cs.created_at
-                        FROM nah_remember.context_snapshots cs
-                        WHERE cs.context_summary IS NOT NULL
-                        ORDER BY cs.created_at DESC
-                        LIMIT $1
-                    """
-                    snapshot_rows = await conn.fetch(snapshot_query, remaining)
+                    if ts_q:
+                        snapshot_query = """
+                            SELECT
+                                'context_snapshot' as memory_type,
+                                cs.id::text as memory_id,
+                                cs.context_summary as content,
+                                0.6 as importance_score,
+                                0 as access_count,
+                                0.0 as reinforcement_score,
+                                cs.created_at,
+                                LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(cs.context_summary, '')), to_tsquery('english', $1)) * 2.0) as similarity
+                            FROM nah_remember.context_snapshots cs
+                            WHERE cs.context_summary IS NOT NULL
+                              AND to_tsvector('english', coalesce(cs.context_summary, '')) @@ to_tsquery('english', $1)
+                            ORDER BY similarity DESC, cs.created_at DESC
+                            LIMIT $2
+                        """
+                        snapshot_rows = await conn.fetch(snapshot_query, ts_q, remaining)
+                    else:
+                        snapshot_query = """
+                            SELECT
+                                'context_snapshot' as memory_type,
+                                cs.id::text as memory_id,
+                                cs.context_summary as content,
+                                0.6 as importance_score,
+                                0 as access_count,
+                                0.0 as reinforcement_score,
+                                cs.created_at,
+                                0.5 as similarity
+                            FROM nah_remember.context_snapshots cs
+                            WHERE cs.context_summary IS NOT NULL
+                            ORDER BY cs.created_at DESC
+                            LIMIT $1
+                        """
+                        snapshot_rows = await conn.fetch(snapshot_query, remaining)
+
                     for r in snapshot_rows:
                         results.append(
                             RankedResult(
@@ -367,7 +508,7 @@ class NahRememberPhase3:
                                 access_count=r["access_count"],
                                 reinforcement_score=r["reinforcement_score"],
                                 created_at=r["created_at"],
-                                similarity=0.5,
+                                similarity=r["similarity"],
                             )
                         )
 
@@ -378,51 +519,137 @@ class NahRememberPhase3:
 
     async def query_semantic(
         self,
-        query_embedding: List[float],
+        query_embedding: Optional[List[float]] = None,
+        query_text: Optional[str] = None,
         embedding_dim: int = EMBEDDING_DIM,
         limit: int = 10,
     ) -> List[RankedResult]:
-        """Query semantic layer: semantic memories + knowledge graph entities"""
+        """Query semantic layer: semantic memories + knowledge graph entities (hybrid dense + sparse)"""
         results = []
         try:
-            embedding_str = self._format_vector(query_embedding, embedding_dim)
+            embedding_str = (
+                self._format_vector(query_embedding, embedding_dim) if query_embedding else None
+            )
+            ts_q = self._prepare_tsquery(query_text)
 
             async with self.pool.acquire() as conn:
-                # 1. Semantic memories
-                memory_query = """
-                    SELECT
-                        'semantic_memory' as memory_type,
-                        sm.id::text as memory_id,
-                        sm.content,
-                        sm.importance_score,
-                        sm.access_count,
-                        coalesce(sm.reinforcement_score, 0.0) as reinforcement_score,
-                        sm.created_at,
-                        1 - (sm.embedding <=> $1::vector) as similarity
-                    FROM nah_remember.semantic_memories sm
-                    WHERE sm.embedding IS NOT NULL
-                    ORDER BY sm.embedding <=> $1::vector
-                    LIMIT $2
-                """
-                memory_rows = await conn.fetch(memory_query, embedding_str, limit)
+                if embedding_str and ts_q:
+                    memory_query = """
+                        SELECT
+                            'semantic_memory' as memory_type,
+                            sm.id::text as memory_id,
+                            sm.content,
+                            coalesce(sm.importance_score, 0.5) as importance_score,
+                            coalesce(sm.access_count, 0) as access_count,
+                            coalesce(sm.reinforcement_score, 0.0) as reinforcement_score,
+                            sm.created_at,
+                            (
+                                (CASE WHEN sm.embedding IS NOT NULL THEN (1 - (sm.embedding <=> $1::vector)) ELSE 0.0 END) * 0.6 +
+                                LEAST(1.0, ts_rank_cd(to_tsvector('english', sm.content), to_tsquery('english', $2)) * 2.0) * 0.4
+                            ) as similarity
+                        FROM nah_remember.semantic_memories sm
+                        WHERE (sm.archived IS NULL OR sm.archived = false)
+                          AND (sm.embedding IS NOT NULL OR to_tsvector('english', sm.content) @@ to_tsquery('english', $2))
+                        ORDER BY similarity DESC
+                        LIMIT $3
+                    """
+                    memory_rows = await conn.fetch(memory_query, embedding_str, ts_q, limit)
 
-                # 2. Entities (world-model concepts/entities)
-                entity_query = """
-                    SELECT
-                        'entity' as memory_type,
-                        e.id::text as memory_id,
-                        coalesce(e.description, e.name) as content,
-                        e.importance_score,
-                        e.access_count,
-                        0.0 as reinforcement_score,
-                        e.created_at,
-                        1 - (e.embedding <=> $1::vector) as similarity
-                    FROM nah_remember.entities e
-                    WHERE e.embedding IS NOT NULL
-                    ORDER BY e.embedding <=> $1::vector
-                    LIMIT $2
-                """
-                entity_rows = await conn.fetch(entity_query, embedding_str, limit)
+                    entity_query = """
+                        SELECT
+                            'entity' as memory_type,
+                            e.id::text as memory_id,
+                            coalesce(e.description, e.name) as content,
+                            coalesce(e.importance_score, 0.5) as importance_score,
+                            coalesce(e.access_count, 0) as access_count,
+                            0.0 as reinforcement_score,
+                            e.created_at,
+                            (
+                                (CASE WHEN e.embedding IS NOT NULL THEN (1 - (e.embedding <=> $1::vector)) ELSE 0.0 END) * 0.6 +
+                                LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(e.description, '') || ' ' || e.name), to_tsquery('english', $2)) * 2.0) * 0.4
+                            ) as similarity
+                        FROM nah_remember.entities e
+                        WHERE (e.embedding IS NOT NULL OR to_tsvector('english', coalesce(e.description, '') || ' ' || e.name) @@ to_tsquery('english', $2))
+                        ORDER BY similarity DESC
+                        LIMIT $3
+                    """
+                    entity_rows = await conn.fetch(entity_query, embedding_str, ts_q, limit)
+
+                elif embedding_str:
+                    memory_query = """
+                        SELECT
+                            'semantic_memory' as memory_type,
+                            sm.id::text as memory_id,
+                            sm.content,
+                            coalesce(sm.importance_score, 0.5) as importance_score,
+                            coalesce(sm.access_count, 0) as access_count,
+                            coalesce(sm.reinforcement_score, 0.0) as reinforcement_score,
+                            sm.created_at,
+                            1 - (sm.embedding <=> $1::vector) as similarity
+                        FROM nah_remember.semantic_memories sm
+                        WHERE sm.embedding IS NOT NULL
+                          AND (sm.archived IS NULL OR sm.archived = false)
+                        ORDER BY sm.embedding <=> $1::vector
+                        LIMIT $2
+                    """
+                    memory_rows = await conn.fetch(memory_query, embedding_str, limit)
+
+                    entity_query = """
+                        SELECT
+                            'entity' as memory_type,
+                            e.id::text as memory_id,
+                            coalesce(e.description, e.name) as content,
+                            coalesce(e.importance_score, 0.5) as importance_score,
+                            coalesce(e.access_count, 0) as access_count,
+                            0.0 as reinforcement_score,
+                            e.created_at,
+                            1 - (e.embedding <=> $1::vector) as similarity
+                        FROM nah_remember.entities e
+                        WHERE e.embedding IS NOT NULL
+                        ORDER BY e.embedding <=> $1::vector
+                        LIMIT $2
+                    """
+                    entity_rows = await conn.fetch(entity_query, embedding_str, limit)
+
+                elif ts_q:
+                    memory_query = """
+                        SELECT
+                            'semantic_memory' as memory_type,
+                            sm.id::text as memory_id,
+                            sm.content,
+                            coalesce(sm.importance_score, 0.5) as importance_score,
+                            coalesce(sm.access_count, 0) as access_count,
+                            coalesce(sm.reinforcement_score, 0.0) as reinforcement_score,
+                            sm.created_at,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', sm.content), to_tsquery('english', $1)) * 2.0) as similarity
+                        FROM nah_remember.semantic_memories sm
+                        WHERE (sm.archived IS NULL OR sm.archived = false)
+                          AND to_tsvector('english', sm.content) @@ to_tsquery('english', $1)
+                        ORDER BY similarity DESC
+                        LIMIT $2
+                    """
+                    memory_rows = await conn.fetch(memory_query, ts_q, limit)
+
+                    entity_query = """
+                        SELECT
+                            'entity' as memory_type,
+                            e.id::text as memory_id,
+                            coalesce(e.description, e.name) as content,
+                            coalesce(e.importance_score, 0.5) as importance_score,
+                            coalesce(e.access_count, 0) as access_count,
+                            0.0 as reinforcement_score,
+                            e.created_at,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(e.description, '') || ' ' || e.name), to_tsquery('english', $1)) * 2.0) as similarity
+                        FROM nah_remember.entities e
+                        WHERE to_tsvector('english', coalesce(e.description, '') || ' ' || e.name) @@ to_tsquery('english', $1)
+                        ORDER BY similarity DESC
+                        LIMIT $2
+                    """
+                    entity_rows = await conn.fetch(entity_query, ts_q, limit)
+
+                else:
+                    memory_rows = []
+                    entity_rows = []
 
             for r in memory_rows:
                 results.append(
@@ -461,33 +688,79 @@ class NahRememberPhase3:
 
     async def query_procedural(
         self,
-        query_embedding: List[float],
+        query_embedding: Optional[List[float]] = None,
+        query_text: Optional[str] = None,
         embedding_dim: int = EMBEDDING_DIM,
         limit: int = 10,
     ) -> List[RankedResult]:
-        """Query procedural layer: executable procedures and playbooks"""
+        """Query procedural layer: executable procedures and playbooks (hybrid dense + sparse)"""
         results = []
         try:
-            embedding_str = self._format_vector(query_embedding, embedding_dim)
+            embedding_str = (
+                self._format_vector(query_embedding, embedding_dim) if query_embedding else None
+            )
+            ts_q = self._prepare_tsquery(query_text)
 
             async with self.pool.acquire() as conn:
-                procedure_query = """
-                    SELECT
-                        'procedure' as memory_type,
-                        p.id::text as memory_id,
-                        coalesce(p.description, p.name) as content,
-                        0.7 as importance_score,
-                        p.execution_count as access_count,
-                        coalesce(p.success_rate, 0.0) as reinforcement_score,
-                        p.created_at,
-                        1 - (p.embedding <=> $1::vector) as similarity,
-                        p.metadata
-                    FROM nah_remember.procedures p
-                    WHERE p.embedding IS NOT NULL
-                    ORDER BY p.embedding <=> $1::vector
-                    LIMIT $2
-                """
-                rows = await conn.fetch(procedure_query, embedding_str, limit)
+                if embedding_str and ts_q:
+                    procedure_query = """
+                        SELECT
+                            'procedure' as memory_type,
+                            p.id::text as memory_id,
+                            coalesce(p.description, p.name) as content,
+                            0.7 as importance_score,
+                            coalesce(p.execution_count, 0) as access_count,
+                            coalesce(p.success_rate, 0.0) as reinforcement_score,
+                            p.created_at,
+                            (
+                                (CASE WHEN p.embedding IS NOT NULL THEN (1 - (p.embedding <=> $1::vector)) ELSE 0.0 END) * 0.6 +
+                                LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(p.description, '') || ' ' || p.name), to_tsquery('english', $2)) * 2.0) * 0.4
+                            ) as similarity,
+                            p.metadata
+                        FROM nah_remember.procedures p
+                        WHERE (p.embedding IS NOT NULL OR to_tsvector('english', coalesce(p.description, '') || ' ' || p.name) @@ to_tsquery('english', $2))
+                        ORDER BY similarity DESC
+                        LIMIT $3
+                    """
+                    rows = await conn.fetch(procedure_query, embedding_str, ts_q, limit)
+                elif embedding_str:
+                    procedure_query = """
+                        SELECT
+                            'procedure' as memory_type,
+                            p.id::text as memory_id,
+                            coalesce(p.description, p.name) as content,
+                            0.7 as importance_score,
+                            coalesce(p.execution_count, 0) as access_count,
+                            coalesce(p.success_rate, 0.0) as reinforcement_score,
+                            p.created_at,
+                            1 - (p.embedding <=> $1::vector) as similarity,
+                            p.metadata
+                        FROM nah_remember.procedures p
+                        WHERE p.embedding IS NOT NULL
+                        ORDER BY p.embedding <=> $1::vector
+                        LIMIT $2
+                    """
+                    rows = await conn.fetch(procedure_query, embedding_str, limit)
+                elif ts_q:
+                    procedure_query = """
+                        SELECT
+                            'procedure' as memory_type,
+                            p.id::text as memory_id,
+                            coalesce(p.description, p.name) as content,
+                            0.7 as importance_score,
+                            coalesce(p.execution_count, 0) as access_count,
+                            coalesce(p.success_rate, 0.0) as reinforcement_score,
+                            p.created_at,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(p.description, '') || ' ' || p.name), to_tsquery('english', $1)) * 2.0) as similarity,
+                            p.metadata
+                        FROM nah_remember.procedures p
+                        WHERE to_tsvector('english', coalesce(p.description, '') || ' ' || p.name) @@ to_tsquery('english', $1)
+                        ORDER BY similarity DESC
+                        LIMIT $2
+                    """
+                    rows = await conn.fetch(procedure_query, ts_q, limit)
+                else:
+                    rows = []
 
             for r in rows:
                 results.append(
@@ -509,41 +782,86 @@ class NahRememberPhase3:
             logger.error(f"Procedural query failed: {e}")
             return []
 
-    async def query_meta(self, limit: int = 10) -> List[RankedResult]:
-        """Query meta layer: entity relationships + evolution tracking"""
+    async def query_meta(
+        self,
+        query_text: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[RankedResult]:
+        """Query meta layer: entity relationships + evolution tracking (query-grounded)"""
         results = []
         try:
+            ts_q = self._prepare_tsquery(query_text)
             async with self.pool.acquire() as conn:
-                rel_query = """
-                    SELECT
-                        'relationship' as memory_type,
-                        r.id::text as memory_id,
-                        r.description as content,
-                        CASE WHEN r.strength > 0.7 THEN 0.8 ELSE 0.5 END as importance_score,
-                        0 as access_count,
-                        0.0 as reinforcement_score,
-                        r.created_at
-                    FROM nah_remember.relationships r
-                    ORDER BY r.strength DESC
-                    LIMIT $1
-                """
-                rel_rows = await conn.fetch(rel_query, limit)
+                if ts_q:
+                    rel_query = """
+                        SELECT
+                            'relationship' as memory_type,
+                            r.id::text as memory_id,
+                            coalesce(r.description, s.name || ' ' || r.relationship_type || ' ' || t.name) as content,
+                            CASE WHEN r.strength > 0.7 THEN 0.8 ELSE 0.5 END as importance_score,
+                            0 as access_count,
+                            0.0 as reinforcement_score,
+                            r.created_at,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(r.description, '') || ' ' || s.name || ' ' || t.name || ' ' || r.relationship_type), to_tsquery('english', $1)) * 2.0) as similarity
+                        FROM nah_remember.relationships r
+                        JOIN nah_remember.entities s ON r.source_entity_id = s.id
+                        JOIN nah_remember.entities t ON r.target_entity_id = t.id
+                        WHERE to_tsvector('english', coalesce(r.description, '') || ' ' || s.name || ' ' || t.name || ' ' || r.relationship_type) @@ to_tsquery('english', $1)
+                        ORDER BY similarity DESC, r.strength DESC
+                        LIMIT $2
+                    """
+                    rel_rows = await conn.fetch(rel_query, ts_q, limit)
 
-                history_query = """
-                    SELECT
-                        'memory_evolution' as memory_type,
-                        mh.id::text as memory_id,
-                        mh.new_content as content,
-                        0.6 as importance_score,
-                        0 as access_count,
-                        0.0 as reinforcement_score,
-                        mh.created_at
-                    FROM nah_remember.memory_history mh
-                    WHERE mh.change_type = 'update'
-                    ORDER BY mh.created_at DESC
-                    LIMIT $1
-                """
-                history_rows = await conn.fetch(history_query, limit)
+                    history_query = """
+                        SELECT
+                            'memory_evolution' as memory_type,
+                            mh.id::text as memory_id,
+                            coalesce(mh.new_content, mh.change_type) as content,
+                            0.6 as importance_score,
+                            0 as access_count,
+                            0.0 as reinforcement_score,
+                            mh.created_at,
+                            LEAST(1.0, ts_rank_cd(to_tsvector('english', coalesce(mh.new_content, '') || ' ' || coalesce(mh.previous_content, '')), to_tsquery('english', $1)) * 2.0) as similarity
+                        FROM nah_remember.memory_history mh
+                        WHERE mh.change_type = 'update'
+                          AND to_tsvector('english', coalesce(mh.new_content, '') || ' ' || coalesce(mh.previous_content, '')) @@ to_tsquery('english', $1)
+                        ORDER BY similarity DESC, mh.created_at DESC
+                        LIMIT $2
+                    """
+                    history_rows = await conn.fetch(history_query, ts_q, limit)
+                else:
+                    rel_query = """
+                        SELECT
+                            'relationship' as memory_type,
+                            r.id::text as memory_id,
+                            r.description as content,
+                            CASE WHEN r.strength > 0.7 THEN 0.8 ELSE 0.5 END as importance_score,
+                            0 as access_count,
+                            0.0 as reinforcement_score,
+                            r.created_at,
+                            0.5 as similarity
+                        FROM nah_remember.relationships r
+                        ORDER BY r.strength DESC
+                        LIMIT $1
+                    """
+                    rel_rows = await conn.fetch(rel_query, limit)
+
+                    history_query = """
+                        SELECT
+                            'memory_evolution' as memory_type,
+                            mh.id::text as memory_id,
+                            mh.new_content as content,
+                            0.6 as importance_score,
+                            0 as access_count,
+                            0.0 as reinforcement_score,
+                            mh.created_at,
+                            0.5 as similarity
+                        FROM nah_remember.memory_history mh
+                        WHERE mh.change_type = 'update'
+                        ORDER BY mh.created_at DESC
+                        LIMIT $1
+                    """
+                    history_rows = await conn.fetch(history_query, limit)
 
             for r in rel_rows:
                 results.append(
@@ -556,6 +874,7 @@ class NahRememberPhase3:
                         access_count=r["access_count"],
                         reinforcement_score=r["reinforcement_score"],
                         created_at=r["created_at"],
+                        similarity=r["similarity"],
                     )
                 )
 
@@ -570,6 +889,7 @@ class NahRememberPhase3:
                         access_count=r["access_count"],
                         reinforcement_score=r["reinforcement_score"],
                         created_at=r["created_at"],
+                        similarity=r["similarity"],
                     )
                 )
 
@@ -887,7 +1207,8 @@ class NahRememberPhase3:
 
     async def remember_search_ranked(
         self,
-        query_embedding: List[float],
+        query_embedding: Optional[List[float]] = None,
+        query_text: Optional[str] = None,
         memory_type: Literal[
             "ephemeral", "episodic", "semantic", "procedural", "meta", "all"
         ] = "all",
@@ -905,8 +1226,25 @@ class NahRememberPhase3:
     ) -> Dict[str, Any]:
         """
         Unified ranked search across memory layers using Bet 2 formula.
+        Supports hybrid dense vector + sparse tsvector, dense vector only, or lexical fallback.
         """
         try:
+            if not query_embedding and not query_text:
+                return {
+                    "success": False,
+                    "error": "Neither query_embedding nor query_text provided",
+                    "query_type": memory_type,
+                    "total_results": 0,
+                    "results": [],
+                }
+
+            if query_embedding and query_text:
+                search_mode = "hybrid"
+            elif query_embedding:
+                search_mode = "dense_vector"
+            else:
+                search_mode = "lexical_fallback"
+
             # Normalize weights to sum to 1.0
             total_w = similarity_weight + significance_weight + recency_weight + access_weight
             if total_w > 0:
@@ -920,7 +1258,12 @@ class NahRememberPhase3:
 
             # 1. Ephemeral
             if memory_type in ("ephemeral", "all"):
-                ephemeral = await self.query_ephemeral(query_embedding, embedding_dim, limit=limit)
+                ephemeral = await self.query_ephemeral(
+                    query_embedding=query_embedding,
+                    query_text=query_text,
+                    embedding_dim=embedding_dim,
+                    limit=limit,
+                )
                 all_results.extend(ephemeral)
                 if ephemeral:
                     layers_queried.append("ephemeral")
@@ -928,7 +1271,8 @@ class NahRememberPhase3:
             # 2. Episodic
             if memory_type in ("episodic", "all"):
                 episodic = await self.query_episodic(
-                    query_embedding,
+                    query_embedding=query_embedding,
+                    query_text=query_text,
                     embedding_dim=embedding_dim,
                     task_type=task_type,
                     hunt_context=hunt_context,
@@ -942,7 +1286,12 @@ class NahRememberPhase3:
 
             # 3. Semantic
             if memory_type in ("semantic", "all"):
-                semantic = await self.query_semantic(query_embedding, embedding_dim, limit=limit)
+                semantic = await self.query_semantic(
+                    query_embedding=query_embedding,
+                    query_text=query_text,
+                    embedding_dim=embedding_dim,
+                    limit=limit,
+                )
                 all_results.extend(semantic)
                 if semantic:
                     layers_queried.append("semantic")
@@ -950,7 +1299,10 @@ class NahRememberPhase3:
             # 4. Procedural
             if memory_type in ("procedural", "all"):
                 procedural = await self.query_procedural(
-                    query_embedding, embedding_dim, limit=limit
+                    query_embedding=query_embedding,
+                    query_text=query_text,
+                    embedding_dim=embedding_dim,
+                    limit=limit,
                 )
                 all_results.extend(procedural)
                 if procedural:
@@ -958,7 +1310,10 @@ class NahRememberPhase3:
 
             # 5. Meta
             if memory_type in ("meta", "all"):
-                meta = await self.query_meta(limit=limit)
+                meta = await self.query_meta(
+                    query_text=query_text,
+                    limit=limit,
+                )
                 all_results.extend(meta)
                 if meta:
                     layers_queried.append("meta")
@@ -980,6 +1335,7 @@ class NahRememberPhase3:
             return {
                 "success": True,
                 "query_type": memory_type,
+                "search_mode": search_mode,
                 "total_results": len(all_results),
                 "layers_queried": layers_queried,
                 "weights": {
@@ -1038,12 +1394,15 @@ def add_phase3_tools_to_mcp(
         pressure: Optional[float] = None,
     ) -> Dict[str, Any]:
         if not query_embedding and query and embedding_fn:
-            query_embedding = await embedding_fn(query)
-        if not query_embedding:
-            query_embedding = [0.0] * embedding_dim
+            try:
+                query_embedding = await embedding_fn(query)
+            except Exception as e:
+                logger.warning(f"Embedding generation failed: {e}; falling back to lexical search")
+                query_embedding = None
 
         return await phase3.remember_search_ranked(
-            query_embedding,
+            query_embedding=query_embedding,
+            query_text=query,
             memory_type=memory_type,
             limit=limit,
             embedding_dim=embedding_dim,

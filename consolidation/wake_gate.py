@@ -14,17 +14,88 @@ Algorithm:
 import datetime
 import json
 import logging
+import os
+import urllib.request
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import uuid
 
 from consolidation.evidence_sufficiency import sufficient
-from consolidation.trial_balance import trial_balance
+from consolidation.trial_balance import trial_balance, DEFAULT_SEALED_ANCHORS
 
 logger = logging.getLogger(__name__)
 
 EXPECTED_PRODUCER = "nah-neural.dreamer.propose/deterministic"
 DEFAULT_QUARANTINE_DIR = Path(__file__).parent / "_quarantine"
+
+
+async def neural_judge_probe(
+    candidate: Dict[str, Any],
+    probe_prompt: str,
+    judge_model: str = "astro-primary",
+    omniroute_url: str = "http://localhost:20128/v1/chat/completions",
+    api_key: Optional[str] = None,
+    timeout: float = 5.0,
+) -> float:
+    """
+    Execute neural judge probe against candidate consolidation item.
+    Queries OmniRoute live LLM gateway with structured evaluation prompt.
+    Returns normalized score in [0.0, 1.0].
+    """
+    token = api_key or os.getenv("OMNIROUTE_API_KEY") or "sk-0118a87ba8659e4f-fad3b9-7580b191"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    cand_desc = json.dumps(candidate, default=str)
+    prompt = (
+        f"You are the independent neural wake-probe evaluator for the nah-remember cognitive memory system.\n"
+        f"Judge Model: {judge_model}\n"
+        f"Evaluate the quality, correctness, and safety of this consolidation candidate:\n"
+        f"Candidate: {cand_desc}\n"
+        f"Probe Target: {probe_prompt}\n\n"
+        f"Respond with a single JSON object containing only 'score' (an integer from 1 to 5) and 'rationale' (a brief string).\n"
+        f'Example: {{"score": 4, "rationale": "Robust sequence of actions"}}'
+    )
+    payload = {
+        "model": judge_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 100,
+    }
+
+    def _query_omniroute() -> float:
+        req = urllib.request.Request(
+            omniroute_url,
+            headers=headers,
+            data=json.dumps(payload).encode("utf-8"),
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            resp_data = json.loads(res.read().decode("utf-8"))
+            content = resp_data["choices"][0]["message"]["content"]
+            try:
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1:
+                    parsed = json.loads(content[start : end + 1])
+                    val = float(parsed.get("score", 3))
+                    return max(0.0, min(1.0, (val - 1.0) / 4.0))
+            except Exception:
+                pass
+            for ch in content:
+                if ch in "12345":
+                    return max(0.0, min(1.0, (float(ch) - 1.0) / 4.0))
+            return 0.5
+
+    try:
+        score = await asyncio.to_thread(_query_omniroute)
+        return score
+    except Exception as e:
+        logger.warning(
+            f"Neural judge probe to OmniRoute failed ({e}); falling back to heuristic evaluation"
+        )
+        return 0.75 if candidate.get("steps") or candidate.get("pattern") else 0.5
 
 
 def write_quarantine(

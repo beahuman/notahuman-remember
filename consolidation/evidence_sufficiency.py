@@ -87,3 +87,39 @@ def sufficient(
         "threshold_act": A,
         "threshold_wait": B,
     }
+
+
+class SPRTAccumulator:
+    """Accumulates sequential observations across multiple consolidation cycles."""
+
+    def __init__(
+        self,
+        item_id: str,
+        prior: float = 0.5,
+        cost_act: float = 5.0,
+        cost_wait: float = 1.0,
+        cost_wrong: float = 50.0,
+    ):
+        self.item_id = item_id
+        self.prior = prior
+        self.cost_act = cost_act
+        self.cost_wait = cost_wait
+        self.cost_wrong = cost_wrong
+        self.observations: List[int] = []
+        self.cycle_count: int = 0
+
+    def record_run(self, new_obs: List[int]) -> Dict[str, Any]:
+        """Append observations from a run and return updated SPRT decision."""
+        self.observations.extend(new_obs)
+        self.cycle_count += 1
+        res = sufficient(
+            self.observations,
+            prior=self.prior,
+            cost_act=self.cost_act,
+            cost_wait=self.cost_wait,
+            cost_wrong=self.cost_wrong,
+        )
+        res["item_id"] = self.item_id
+        res["cycle_count"] = self.cycle_count
+        res["total_observations"] = len(self.observations)
+        return res
