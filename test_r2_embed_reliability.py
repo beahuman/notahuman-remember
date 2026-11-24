@@ -57,9 +57,10 @@ def test_persistent_429_returns_none_after_bounded_retries():
 def test_uses_dedicated_embedding_key_not_ambiguous_global():
     s = _srv()
     s.http_client.post = AsyncMock(return_value=_resp(200, [0.1] * 1024))
-    asyncio.run(s.generate_embedding("hi"))
+    with patch.object(server, "EMBEDDING_API_KEY", "test-embed-key"):
+        asyncio.run(s.generate_embedding("hi"))
     _, kwargs = s.http_client.post.call_args
-    assert kwargs["headers"]["Authorization"] == f"Bearer {server.EMBEDDING_API_KEY}"
+    assert kwargs["headers"]["Authorization"] == "Bearer test-embed-key"
 
 
 if __name__ == "__main__":

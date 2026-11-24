@@ -16,6 +16,7 @@ import ast
 from decimal import Decimal
 import json
 from pathlib import Path
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -42,7 +43,7 @@ from consolidation.wake_gate import (
 
 
 @pytest.mark.asyncio
-async def test_dead_judge_fault_injection_fails_closed():
+def test_dead_judge_fault_injection_fails_closed():
     """
     DISRUPTIVE TEST: Simulate dead/unreachable LLM endpoint, timeouts, and HTTP errors.
     Verified invariant: Judge must FAIL CLOSED to 0.0 and wake gate must QUARANTINE.
@@ -61,10 +62,12 @@ async def test_dead_judge_fault_injection_fails_closed():
         "urllib.request.urlopen",
         side_effect=ConnectionRefusedError("Connection refused to OmniRoute"),
     ):
-        score = await neural_judge_probe(
-            candidate=candidate_with_steps,
-            probe_prompt="Evaluate playbook safety",
-            api_key="valid-mock-key",
+        score = asyncio.run(
+            neural_judge_probe(
+                candidate=candidate_with_steps,
+                probe_prompt="Evaluate playbook safety",
+                api_key="valid-mock-key",
+            )
         )
         # MUST return 0.0, NOT 0.75!
         assert score == 0.0, f"Expected fail-closed 0.0 on dead judge, got {score}"
@@ -85,7 +88,7 @@ async def test_dead_judge_fault_injection_fails_closed():
 
 
 @pytest.mark.asyncio
-async def test_judge_model_defaults_to_chat_model():
+def test_judge_model_defaults_to_chat_model():
     """Verify default judge model is an actual chat model and differs from synthesizer."""
     assert DEFAULT_JUDGE_MODEL != "bge-reranker-v2-m3", "Judge model cannot be a reranker!"
     assert "instruct" in DEFAULT_JUDGE_MODEL or "coder" in DEFAULT_JUDGE_MODEL, (
